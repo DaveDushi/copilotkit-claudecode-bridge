@@ -1,0 +1,77 @@
+{
+  "name": "copilotkit-claude-bridge",
+  "version": "0.1.0",
+  "description": "Bridge between CopilotKit (AG-UI protocol) and Claude Code CLI",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "import": "./dist/react/index.js",
+      "require": "./dist/react/index.cjs"
+    }
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "uuid": "^10.0.0",
+    "ws": "^8.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.2.14",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  },
+  "peerDependencies": {
+    "@ag-ui/client": ">=0.1.0",
+    "@ag-ui/core": ">=0.1.0",
+    "@copilotkit/react-core": ">=1.50.0",
+    "react": ">=18.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@ag-ui/core": {
+      "optional": true
+    },
+    "@ag-ui/client": {
+      "optional": true
+    },
+    "@copilotkit/react-core": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/copilotkit-claude-bridge"
+  },
+  "keywords": [
+    "copilotkit",
+    "claude",
+    "claude-code",
+    "ag-ui",
+    "bridge",
+    "ai-agent"
+  ]
+}

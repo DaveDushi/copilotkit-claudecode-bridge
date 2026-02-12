@@ -67,6 +67,10 @@ export function spawnClaude(options: SpawnOptions): ChildProcess {
     }
   });
 
+  child.on("error", (err) => {
+    console.error(`[bridge] Failed to spawn Claude CLI for session ${sessionId}: ${err.message}`);
+  });
+
   console.log(`[bridge] Spawned Claude CLI for session ${sessionId} in ${workingDir}`);
 
   return child;
@@ -81,6 +85,10 @@ export function monitorProcess(
   child: ChildProcess,
 ): void {
   child.on("exit", (code, signal) => {
+    console.log(
+      `[bridge] Claude CLI for session ${sessionId.slice(0, 8)} exited: code=${code}, signal=${signal}`,
+    );
+
     const session = state.sessions.get(sessionId);
     if (!session) return;
 
@@ -90,10 +98,6 @@ export function monitorProcess(
       session.status = { error: `Process exited with code ${code ?? signal}` };
     }
     session.wsSend = null;
-
-    console.log(
-      `[bridge] Claude CLI for session ${sessionId} exited: code=${code}, signal=${signal}`,
-    );
 
     state.emitSessionStatus(sessionId, typeof session.status === "string" ? session.status : "error");
   });

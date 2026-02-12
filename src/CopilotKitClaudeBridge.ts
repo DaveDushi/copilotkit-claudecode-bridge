@@ -148,7 +148,8 @@ export class CopilotKitClaudeBridge extends EventEmitter {
 
   /**
    * Spawn a new Claude CLI session.
-   * Returns the session ID.
+   * Returns the session ID once the CLI has connected via WebSocket.
+   * Waits up to 30s for the connection (Claude CLI can take a while to start).
    */
   async spawnSession(workingDir: string, initialPrompt?: string): Promise<string> {
     const sessionId = uuidv4();
@@ -166,21 +167,68 @@ export class CopilotKitClaudeBridge extends EventEmitter {
     session.process = child;
     monitorProcess(this.state, sessionId, child);
 
+    // Wait for CLI to connect via WebSocket (or fail)
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup();
+        // Don't reject — the CLI might still connect later
+        console.warn(`[bridge] Session ${sessionId.slice(0, 8)} CLI did not connect within 30s — continuing anyway`);
+        resolve();
+      }, 30_000);
+
+      const checkInterval = setInterval(() => {
+        const s = this.state.sessions.get(sessionId);
+        if (s?.wsSend) {
+          cleanup();
+          resolve();
+        }
+      }, 200);
+
+      const onExit = (code: number | null) => {
+        cleanup();
+        reject(new Error(`Claude CLI exited immediately with code ${code}. Check that 'claude' is on PATH and supports --sdk-url.`));
+      };
+
+      child.on("exit", onExit);
+
+      const cleanup = () => {
+        clearTimeout(timeout);
+        clearInterval(checkInterval);
+        child.off("exit", onExit);
+      };
+    });
+
     return sessionId;
   }
 
   /**
    * Kill a session and its Claude CLI process.
+   * Waits for the process to actually exit before returning.
    */
   async killSession(sessionId: string): Promise<void> {
     const session = this.state.sessions.get(sessionId);
     if (!session) return;
 
-    if (session.process) {
-      session.process.kill("SIGTERM");
-    }
     session.wsSend = null;
     session.status = "terminated";
+
+    if (session.process && !session.process.killed) {
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => {
+          // Force kill if SIGTERM didn't work after 5s
+          try { session.process?.kill("SIGKILL"); } catch {}
+          resolve();
+        }, 5_000);
+
+        session.process!.on("exit", () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+
+        session.process!.kill("SIGTERM");
+      });
+    }
+
     this.state.sessions.delete(sessionId);
     this.state.emitSessionStatus(sessionId, "terminated");
   }

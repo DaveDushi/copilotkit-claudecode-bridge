@@ -2,7 +2,7 @@ import { createServer, type Server as HttpServer, type IncomingMessage, type Ser
 import { v4 as uuidv4 } from "uuid";
 import type { AppState } from "./state.js";
 import type { AguiEvent, RunAgentInput } from "./agui-events.js";
-import type { ClaudeMessage, WsEvent } from "./types.js";
+import type { WsEvent } from "./types.js";
 import { BridgeState, translateClaudeMessage } from "./bridge.js";
 
 export interface AguiServerConfig {
@@ -40,23 +40,48 @@ export function createAguiServer(
     }
 
     const url = req.url ?? "";
+    // Strip query string for route matching
+    const pathname = url.split("?")[0];
+
+    // Detect if path is a connect endpoint
+    const isConnectPath =
+      pathname === `/agent/${agentId}/connect` ||
+      !!pathname.match(/^\/agent\/[^/]+\/connect$/);
 
     // Route matching
-    if (url === "/info" || url === "/api/copilotkit/info") {
+    if (pathname === "/info" || pathname === "/api/copilotkit/info") {
       handleInfo(req, res, agentId, agentDescription);
-    } else if (
-      url === `/agent/${agentId}/run` ||
-      url === `/agent/${agentId}/connect` ||
-      url === "/api/copilotkit"
-    ) {
+    } else if (isConnectPath) {
       if (req.method === "POST") {
-        handleRun(req, res, state, agentId);
+        handleConnect(req, res, state, agentId);
       } else {
         res.writeHead(405, { "Content-Type": "text/plain" });
         res.end("Method Not Allowed");
       }
+    } else if (
+      pathname === `/agent/${agentId}/run` ||
+      pathname === "/api/copilotkit"
+    ) {
+      if (req.method === "POST") {
+        handleRun(req, res, state, agentId, false);
+      } else {
+        res.writeHead(405, { "Content-Type": "text/plain" });
+        res.end("Method Not Allowed");
+      }
+    } else if (pathname.match(/^\/agent\/[^/]+\/run$/)) {
+      if (req.method === "POST") {
+        handleRun(req, res, state, agentId, false);
+      } else {
+        res.writeHead(405, { "Content-Type": "text/plain" });
+        res.end("Method Not Allowed");
+      }
+    } else if (req.method === "POST") {
+      // CopilotKit may POST to the runtimeUrl directly (single transport mode)
+      // or to unexpected paths during agent connection. Handle all POSTs.
+      console.log(`[bridge] Fallback POST handler for: ${pathname}`);
+      handleSingleTransport(req, res, state, agentId);
     } else {
-      console.log(`[bridge] Unmatched request: ${req.method} ${url}`);
+      console.log(`[bridge] Unmatched request: ${req.method} ${pathname}`);
       res.writeHead(404, { "Content-Type": "text/plain" });
       res.end("Not Found");
     }
@@ -73,12 +98,12 @@ function setCorsHeaders(res: ServerResponse, origins: string[]): void {
 }
 
 function handleInfo(
-  req: IncomingMessage,
+  _req: IncomingMessage,
   res: ServerResponse,
   agentId: string,
   agentDescription: string,
 ): void {
-  console.log(`[bridge] /info endpoint hit (${req.method})`);
+  console.log("[bridge] /info endpoint hit");
   const body = JSON.stringify({
     agents: {
       [agentId]: {
@@ -91,11 +116,161 @@ function handleInfo(
   res.end(body);
 }
 
+/**
+ * Handles the /agent/{id}/connect endpoint.
+ *
+ * CopilotKit calls this when initializing the agent connection (connectAgent).
+ * It's a lifecycle handshake — no user message is expected.
+ * We return a minimal SSE stream: RUN_STARTED → STATE_SNAPSHOT → RUN_FINISHED.
+ */
+function handleConnect(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _state: AppState,
+  agentId: string,
+): void {
+  console.log(`[bridge] AG-UI connect request for agent: ${agentId}`);
+
+  // Read request body (even though we mostly ignore it for connect)
+  let body = "";
+  req.on("data", (chunk) => {
+    body += chunk.toString();
+  });
+
+  req.on("end", () => {
+    let input: Partial<RunAgentInput> = {};
+    try {
+      if (body) input = JSON.parse(body);
+    } catch {
+      // Tolerate invalid JSON for connect — it's a handshake
+    }
+
+    // Set up SSE response
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+
+    const threadId = input.threadId ?? uuidv4();
+    const runId = input.runId ?? uuidv4();
+
+    const sendEvent = (event: AguiEvent) => {
+      const json = JSON.stringify(event);
+      res.write(`data: ${json}\n\n`);
+    };
+
+    sendEvent({ type: "RUN_STARTED", threadId, runId });
+
+    // Send a state snapshot so CopilotKit knows the agent is alive
+    sendEvent({
+      type: "STATE_SNAPSHOT",
+      snapshot: {
+        agentId,
+        status: "connected",
+      },
+    });
+
+    sendEvent({ type: "RUN_FINISHED", threadId, runId });
+    res.end();
+  });
+}
+
+/**
+ * Handles single transport mode POSTs.
+ *
+ * CopilotKit can POST to the runtimeUrl directly with a `method` field
+ * in the JSON body to indicate the intent (e.g., "info", "agent/connect",
+ * "agent/run").
+ */
+function handleSingleTransport(
+  req: IncomingMessage,
+  res: ServerResponse,
+  state: AppState,
+  agentId: string,
+): void {
+  let body = "";
+  req.on("data", (chunk) => {
+    body += chunk.toString();
+  });
+
+  req.on("end", () => {
+    let parsed: Record<string, unknown> = {};
+    try {
+      if (body) parsed = JSON.parse(body);
+    } catch {
+      res.writeHead(400, { "Content-Type": "text/plain" });
+      res.end("Invalid JSON");
+      return;
+    }
+
+    const method = typeof parsed.method === "string" ? parsed.method : "";
+    // Single transport wraps the real input inside `body`:
+    //   { method: "agent/run", params: { agentId: "..." }, body: { threadId, messages, ... } }
+    const innerBody = (parsed.body && typeof parsed.body === "object" ? parsed.body : parsed) as Record<string, unknown>;
+    console.log(`[bridge] Single transport: method="${method}" keys=${Object.keys(parsed).join(",")}`);
+
+    if (method === "info") {
+      // Single transport info request
+      const infoBody = JSON.stringify({
+        agents: {
+          [agentId]: { description: "Claude Code AI agent" },
+        },
+        version: "1.0.0",
+      });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(infoBody);
+    } else if (method === "agent/connect") {
+      // Single transport connect — same as handleConnect
+      handleConnectFromInput(res, innerBody as Partial<RunAgentInput>, agentId);
+    } else if (method === "agent/stop") {
+      // Stop request — acknowledge and return
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    } else if (method === "agent/run" || method === "") {
+      // Run request (or unknown method — treat as run)
+      handleRunFromInput(res, state, innerBody as RunAgentInput, agentId);
+    } else {
+      console.log(`[bridge] Unknown single transport method: "${method}"`);
+      handleRunFromInput(res, state, innerBody as RunAgentInput, agentId);
+    }
+  });
+}
+
+function handleConnectFromInput(
+  res: ServerResponse,
+  input: Partial<RunAgentInput>,
+  agentId: string,
+): void {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+  });
+
+  const threadId = input.threadId ?? uuidv4();
+  const runId = input.runId ?? uuidv4();
+
+  const sendEvent = (event: AguiEvent) => {
+    const json = JSON.stringify(event);
+    res.write(`data: ${json}\n\n`);
+  };
+
+  sendEvent({ type: "RUN_STARTED", threadId, runId });
+  sendEvent({
+    type: "STATE_SNAPSHOT",
+    snapshot: { agentId, status: "connected" },
+  });
+  sendEvent({ type: "RUN_FINISHED", threadId, runId });
+  res.end();
+}
+
 function handleRun(
   req: IncomingMessage,
   res: ServerResponse,
   state: AppState,
   agentId: string,
+  _isConnect: boolean,
 ): void {
   console.log(`[bridge] AG-UI run request for agent: ${agentId}`);
 
@@ -115,6 +290,16 @@ function handleRun(
       return;
     }
 
+    handleRunFromInput(res, state, input, agentId);
+  });
+}
+
+function handleRunFromInput(
+  res: ServerResponse,
+  state: AppState,
+  input: RunAgentInput,
+  agentId: string,
+): void {
     // Set up SSE response
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -137,12 +322,9 @@ function handleRun(
     const userMessage = extractUserMessage(input);
 
     if (!userMessage) {
-      sendEvent({
-        type: "RUN_ERROR",
-        threadId,
-        runId,
-        message: "No user message provided",
-      });
+      // No user message — this may be a connect-style call or empty input.
+      // Complete gracefully instead of erroring.
+      sendEvent({ type: "RUN_FINISHED", threadId, runId });
       res.end();
       return;
     }
@@ -158,7 +340,6 @@ function handleRun(
 
     // 5. Find the active session and send the message
     startBridgeLoop(state, res, sendEvent, threadId, runId, fullMessage, userMessage);
-  });
 }
 
 function extractUserMessage(input: RunAgentInput): string | null {

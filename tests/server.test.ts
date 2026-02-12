@@ -101,7 +101,7 @@ describe("AG-UI HTTP Server", () => {
     expect(errorEvent.message).toContain("No active Claude session");
   }, 20_000);
 
-  it("POST /agent/default/run returns error for empty messages", async () => {
+  it("POST /agent/default/run completes gracefully for empty messages", async () => {
     const state = new AppState();
     server = createAguiServer(state);
 
@@ -124,9 +124,40 @@ describe("AG-UI HTTP Server", () => {
       .filter((line) => line.startsWith("data: "))
       .map((line) => JSON.parse(line.replace("data: ", "")));
 
-    const errorEvent = events.find((e: any) => e.type === "RUN_ERROR");
-    expect(errorEvent).toBeDefined();
-    expect(errorEvent.message).toContain("No user message");
+    // Should complete gracefully with RUN_STARTED + RUN_FINISHED (no error)
+    expect(events[0].type).toBe("RUN_STARTED");
+    const finishedEvent = events.find((e: any) => e.type === "RUN_FINISHED");
+    expect(finishedEvent).toBeDefined();
+  });
+
+  it("POST /agent/default/connect returns SSE handshake", async () => {
+    const state = new AppState();
+    server = createAguiServer(state);
+
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const addr = server.address() as { port: number };
+    port = addr.port;
+
+    const res = await fetch(`http://127.0.0.1:${port}/agent/default/connect`, {
+      method: "POST",
+      body: JSON.stringify({ threadId: "t1" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("text/event-stream");
+
+    const events = res.body
+      .split("\n\n")
+      .filter((line) => line.startsWith("data: "))
+      .map((line) => JSON.parse(line.replace("data: ", "")));
+
+    expect(events.length).toBe(3);
+    expect(events[0].type).toBe("RUN_STARTED");
+    expect(events[1].type).toBe("STATE_SNAPSHOT");
+    expect(events[1].snapshot.status).toBe("connected");
+    expect(events[2].type).toBe("RUN_FINISHED");
   });
 
   it("returns 404 for unknown routes", async () => {

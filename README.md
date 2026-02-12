@@ -106,8 +106,10 @@ const bridge = new CopilotKitClaudeBridge(config?: BridgeConfig);
 |--------|-------------|
 | `start()` | Start WS + HTTP servers. Returns `{ wsPort, httpPort }` |
 | `stop()` | Stop all servers and kill all sessions |
-| `spawnSession(workingDir, initialPrompt?)` | Spawn Claude CLI. Returns session ID |
-| `killSession(sessionId)` | Kill a session |
+| `spawnSession(workingDir, initialPrompt?)` | Spawn Claude CLI. Returns session ID. Waits for CLI to connect |
+| `killSession(sessionId)` | Kill a session and wait for process exit |
+| `setActiveSession(sessionId)` | Set which session receives AG-UI run requests |
+| `activeSessionId` | Get the current active session ID (getter) |
 | `sendMessage(sessionId, content)` | Send a user message to Claude |
 | `approveTool(sessionId, requestId, approved)` | Approve/deny a tool use request |
 | `getRequestHandler()` | Returns `(req, res) => void` for Express/Hono embedding |
@@ -119,6 +121,27 @@ const bridge = new CopilotKitClaudeBridge(config?: BridgeConfig);
 | `session:status` | `(sessionId, status)` | Session status changed |
 | `session:message` | `(sessionId, message)` | Claude message received |
 | `ports` | `(wsPort, httpPort)` | Servers started |
+
+### Multi-Session Support
+
+The bridge supports multiple concurrent Claude CLI sessions. Each session runs in its own working directory. The `activeSessionId` determines which session receives incoming AG-UI requests from CopilotKit.
+
+```ts
+const bridge = new CopilotKitClaudeBridge({ httpPort: 3000 });
+await bridge.start();
+
+// Spawn sessions for different projects
+const s1 = await bridge.spawnSession("/path/to/frontend");
+const s2 = await bridge.spawnSession("/path/to/backend");
+
+// The last spawned session is active by default.
+// Switch between them:
+bridge.setActiveSession(s1);  // now CopilotKit talks to the frontend project
+bridge.setActiveSession(s2);  // switch to backend project
+
+// Kill a session — if it was active, the next available session auto-activates
+await bridge.killSession(s1);
+```
 
 ### `useClaudeBridge` (React hook)
 
@@ -184,25 +207,34 @@ app.use(bridge.getRequestHandler());
 app.listen(3000);
 ```
 
-## Testing End-to-End
+## Test App
 
-A complete test project is included in `test-app/`.
+A complete test project with a session management UI is included in `test-app/`.
 
-### Step 1: Build the library
+### Features
+
+- **Sidebar session manager** — create, switch between, and delete sessions
+- **Multi-folder support** — each session runs Claude in a different working directory
+- **Status indicators** — green (connected/idle), blue (active), orange (starting), grey (disconnected)
+- **Auto-refresh** — session list polls every 3s for status updates
+
+### Running the test app
+
+**Step 1: Build the library**
 
 ```bash
 npm install
 npm run build
 ```
 
-### Step 2: Install test-app dependencies
+**Step 2: Install test-app dependencies**
 
 ```bash
 cd test-app
 npm install
 ```
 
-### Step 3: Start the bridge server
+**Step 3: Start the bridge server**
 
 ```bash
 cd test-app
@@ -214,11 +246,14 @@ You should see:
 ```
   AG-UI server:     http://localhost:3000
   WebSocket server: ws://localhost:3001
-  Spawned session:  <uuid>
+  Default session:  <uuid> (/path/to/test-app)
+
   Open http://localhost:5173 in your browser to chat!
+
+  Management API:   http://localhost:3002
 ```
 
-### Step 4: Start the React frontend
+**Step 4: Start the React frontend**
 
 In a second terminal:
 
@@ -227,15 +262,23 @@ cd test-app
 npx vite
 ```
 
-### Step 5: Open the browser
+**Step 5: Open the browser**
 
-Go to `http://localhost:5173`. Type a message in the chat UI. The flow is:
+Go to `http://localhost:5173`. You'll see:
+- A **sidebar** on the left with your default session
+- A **chat panel** on the right connected to the active session
+- Enter a folder path at the bottom of the sidebar and click **+ New Session** to add more
 
-1. CopilotKit POSTs to `http://localhost:3000` with `{ method: "agent/run", body: { messages } }`
-2. Bridge extracts the user message and sends it to Claude CLI via WebSocket
-3. Claude CLI streams NDJSON responses back through the WebSocket
-4. Bridge translates each NDJSON message into AG-UI SSE events
-5. CopilotKit renders the streaming text in the chat UI
+### Management API
+
+The test app exposes a management API on port 3002:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/sessions` | List all sessions with status and active flag |
+| `POST` | `/api/sessions` | Create session. Body: `{ "workingDir": "/path" }` |
+| `PUT` | `/api/sessions/:id/activate` | Switch the active session |
+| `DELETE` | `/api/sessions/:id` | Kill and remove a session |
 
 ### Quick smoke test (no frontend)
 
@@ -257,6 +300,7 @@ curl http://localhost:3000/info
 - **"No active Claude session"** — The CLI hasn't connected via WebSocket yet. Wait a few seconds after starting the server. Check terminal for `Session <id>: connected`.
 - **No response from agent** — Check that the server logs show `Single transport: method="agent/run"` when you send a message. If you only see `method="info"` and `method="agent/connect"`, the agent connected successfully but may need a message to trigger a run.
 - **CORS errors** — The bridge defaults to `corsOrigins: ["*"]`. If you changed it, ensure your frontend origin is included.
+- **Session shows "starting" indefinitely** — Claude CLI may have failed to start. Check the server terminal for `[bridge][stderr:...]` messages. Ensure `claude --help` runs successfully.
 
 ## Development
 

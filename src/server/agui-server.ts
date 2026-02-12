@@ -409,6 +409,12 @@ function startBridgeLoop(
   let attempt = 0;
 
   const tryFindSession = () => {
+    // Prefer the explicitly active session
+    if (state.activeSessionId) {
+      const active = state.sessions.get(state.activeSessionId);
+      if (active?.wsSend) return active;
+    }
+    // Fall back to any session with an open WebSocket
     for (const [, session] of state.sessions) {
       if (session.wsSend) {
         return session;

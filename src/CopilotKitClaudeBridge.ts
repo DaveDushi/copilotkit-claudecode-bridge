@@ -198,7 +198,27 @@ export class CopilotKitClaudeBridge extends EventEmitter {
       };
     });
 
+    // Auto-activate the first session, or any newly spawned session
+    this.state.activeSessionId = sessionId;
+
     return sessionId;
+  }
+
+  /**
+   * Set the active session that AG-UI run requests are routed to.
+   */
+  setActiveSession(sessionId: string): void {
+    if (!this.state.sessions.has(sessionId)) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+    this.state.activeSessionId = sessionId;
+  }
+
+  /**
+   * Get the current active session ID.
+   */
+  get activeSessionId(): string | null {
+    return this.state.activeSessionId;
   }
 
   /**
@@ -230,6 +250,11 @@ export class CopilotKitClaudeBridge extends EventEmitter {
     }
 
     this.state.sessions.delete(sessionId);
+    if (this.state.activeSessionId === sessionId) {
+      // Auto-activate another session if available
+      const next = this.state.sessions.keys().next();
+      this.state.activeSessionId = next.done ? null : next.value;
+    }
     this.state.emitSessionStatus(sessionId, "terminated");
   }
 

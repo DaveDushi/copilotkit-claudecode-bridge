@@ -8,6 +8,8 @@ import type { WsEvent } from "./types.js";
  */
 export class AppState extends EventEmitter {
   sessions = new Map<string, Session>();
+  /** The session that AG-UI run requests are routed to. */
+  activeSessionId: string | null = null;
 
   emitWsEvent(event: WsEvent): void {
     this.emit("ws_event", event);

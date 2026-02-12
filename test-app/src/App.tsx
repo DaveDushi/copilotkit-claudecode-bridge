@@ -1,13 +1,8 @@
 import { CopilotKit } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
-import { useClaudeBridge } from "copilotkit-claude-bridge/react";
 import "@copilotkit/react-ui/styles.css";
 
 export default function App() {
-  const { runtimeUrl, agents } = useClaudeBridge({
-    runtimeUrl: "http://localhost:3000",
-  });
-
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
       <header
@@ -26,16 +21,13 @@ export default function App() {
       </header>
 
       <div style={{ flex: 1, overflow: "hidden" }}>
-        <CopilotKit
-          runtimeUrl={runtimeUrl}
-          agent="default"
-          agents__unsafe_dev_only={agents}
-        >
+        <CopilotKit runtimeUrl="http://localhost:3000" agent="default">
           <CopilotChat
             instructions="You are a helpful coding assistant powered by Claude Code."
             labels={{
               title: "Claude Code Agent",
-              initial: "Hi! I'm Claude Code. Ask me anything about your codebase.",
+              initial:
+                "Hi! I'm Claude Code. Ask me anything about your codebase.",
             }}
           />
         </CopilotKit>

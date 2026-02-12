@@ -2,38 +2,41 @@
 
 Bridge between [CopilotKit](https://copilotkit.ai) (AG-UI protocol) and [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code).
 
-This library spawns Claude Code CLI, translates its streaming NDJSON protocol into AG-UI events, and serves SSE endpoints that CopilotKit connects to — giving you a Claude Code-powered AI agent in any CopilotKit React app.
+This library spawns Claude Code CLI in SDK mode, translates its streaming NDJSON protocol into AG-UI events, and serves an HTTP endpoint that CopilotKit connects to — giving you a Claude Code-powered AI agent in any CopilotKit React app.
 
 ## How It Works
 
 ```
 CopilotKit React UI
-        │
-        │  POST /agent/default/run (SSE)
-        ▼
-┌─────────────────┐
-│  AG-UI HTTP      │  ← translates AG-UI events via SSE
-│  Server (:3000)  │
-└────────┬────────┘
-         │
+        |
+        |  POST http://localhost:3000
+        |  { method: "agent/run", body: { messages, tools, context } }
+        v
++-------------------+
+|  AG-UI HTTP       |  <- single-endpoint transport
+|  Server (:3000)   |     handles info / connect / run / stop
++--------+----------+
+         |
     BridgeState
    translateClaudeMessage()
-         │
-┌────────┴────────┐
-│  WebSocket       │  ← receives NDJSON from Claude CLI
-│  Server (:3001)  │
-└────────┬────────┘
-         │  ws://127.0.0.1:3001/ws/cli/{sessionId}
-         ▼
+         |
++--------+----------+
+|  WebSocket         |  <- receives NDJSON from Claude CLI
+|  Server (:3001)    |
++--------+-----------+
+         |  ws://127.0.0.1:3001/ws/cli/{sessionId}
+         v
    Claude Code CLI
    (spawned with --sdk-url)
 ```
+
+CopilotKit v1.51+ uses **single-endpoint transport** — all requests (info, connect, run, stop) are POSTed to the `runtimeUrl` with a `{ method, params, body }` JSON envelope. The bridge unwraps these and routes them to the correct handler.
 
 ## Prerequisites
 
 - **Node.js** >= 18
 - **Claude Code CLI** installed and authenticated (`npm install -g @anthropic-ai/claude-code`)
-- Verify it works: `claude --help` should show `--sdk-url` in the output
+- Verify it supports SDK mode: `claude --help` should show `--sdk-url` in the output
 
 ## Installation
 
@@ -41,7 +44,9 @@ CopilotKit React UI
 npm install copilotkit-claude-bridge
 ```
 
-## Quick Start — Standalone Server
+## Quick Start
+
+### 1. Server (Node.js)
 
 ```ts
 import { CopilotKitClaudeBridge } from "copilotkit-claude-bridge";
@@ -53,32 +58,25 @@ const { wsPort, httpPort } = await bridge.start();
 await bridge.spawnSession("./my-project");
 
 console.log(`CopilotKit runtime URL: http://localhost:${httpPort}`);
-// Connect your CopilotKit React app to this URL
 ```
 
-## Quick Start — React Frontend
+### 2. Frontend (React)
 
 ```tsx
-import { useClaudeBridge } from "copilotkit-claude-bridge/react";
 import { CopilotKit } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
+import "@copilotkit/react-ui/styles.css";
 
 function App() {
-  const { runtimeUrl, agents } = useClaudeBridge({
-    runtimeUrl: "http://localhost:3000",
-  });
-
   return (
-    <CopilotKit
-      runtimeUrl={runtimeUrl}
-      agent="default"
-      agents__unsafe_dev_only={agents}
-    >
+    <CopilotKit runtimeUrl="http://localhost:3000" agent="default">
       <CopilotChat />
     </CopilotKit>
   );
 }
 ```
+
+That's it. CopilotKit auto-discovers the agent via the bridge's `/info` response and routes all messages through it.
 
 ## API
 
@@ -124,6 +122,8 @@ const bridge = new CopilotKitClaudeBridge(config?: BridgeConfig);
 
 ### `useClaudeBridge` (React hook)
 
+Optional helper for advanced use cases (custom agent IDs, etc.). For most setups, you don't need this — just pass `runtimeUrl` directly to `<CopilotKit>`.
+
 ```ts
 import { useClaudeBridge } from "copilotkit-claude-bridge/react";
 
@@ -133,11 +133,26 @@ const { runtimeUrl, agents, agentId } = useClaudeBridge({
 });
 ```
 
-Requires `@ag-ui/client` as a peer dependency.
+Requires `@ag-ui/client` and `react` as peer dependencies.
 
-## Translation Map
+## Protocol Details
 
-The bridge translates Claude's NDJSON protocol into AG-UI events:
+### Single-Endpoint Transport
+
+CopilotKit v1.51+ sends all requests to the `runtimeUrl` as POST with a JSON envelope:
+
+```json
+{ "method": "info" }
+{ "method": "agent/connect", "params": { "agentId": "default" }, "body": { ... } }
+{ "method": "agent/run", "params": { "agentId": "default" }, "body": { "messages": [...], "tools": [...] } }
+{ "method": "agent/stop", "params": { "agentId": "default" }, "body": { ... } }
+```
+
+The bridge also supports REST-style endpoints (`GET /info`, `POST /agent/{id}/run`, etc.) for direct testing.
+
+### Translation Map
+
+The bridge translates Claude's NDJSON streaming protocol into AG-UI events:
 
 | Claude NDJSON | AG-UI Event(s) |
 |---------------|----------------|
@@ -169,14 +184,13 @@ app.use(bridge.getRequestHandler());
 app.listen(3000);
 ```
 
-## Testing It End-to-End
+## Testing End-to-End
 
-A complete test project is included in `test-app/`. It has a Node.js server (bridge) and a React frontend (CopilotKit chat UI).
+A complete test project is included in `test-app/`.
 
 ### Step 1: Build the library
 
 ```bash
-# From the repo root
 npm install
 npm run build
 ```
@@ -190,8 +204,6 @@ npm install
 
 ### Step 3: Start the bridge server
 
-Open a terminal:
-
 ```bash
 cd test-app
 npx tsx src/server.ts
@@ -202,17 +214,13 @@ You should see:
 ```
   AG-UI server:     http://localhost:3000
   WebSocket server: ws://localhost:3001
-
   Spawned session:  <uuid>
-
   Open http://localhost:5173 in your browser to chat!
 ```
 
-This spawns Claude Code CLI connected to the bridge. You'll see status updates like `Session <id>: connected` once Claude CLI connects via WebSocket.
-
 ### Step 4: Start the React frontend
 
-Open a second terminal:
+In a second terminal:
 
 ```bash
 cd test-app
@@ -221,41 +229,41 @@ npx vite
 
 ### Step 5: Open the browser
 
-Go to `http://localhost:5173`. You'll see a CopilotKit chat UI. Type a message — it goes through:
+Go to `http://localhost:5173`. Type a message in the chat UI. The flow is:
 
-1. CopilotKit frontend -> POST to `http://localhost:3000/agent/default/run` (SSE)
-2. Bridge extracts the user message, sends it to Claude CLI via WebSocket
+1. CopilotKit POSTs to `http://localhost:3000` with `{ method: "agent/run", body: { messages } }`
+2. Bridge extracts the user message and sends it to Claude CLI via WebSocket
 3. Claude CLI streams NDJSON responses back through the WebSocket
-4. Bridge translates each NDJSON message into AG-UI events
-5. AG-UI events stream back to CopilotKit as SSE
-6. CopilotKit renders the streaming text and tool calls
+4. Bridge translates each NDJSON message into AG-UI SSE events
+5. CopilotKit renders the streaming text in the chat UI
 
-### Quick smoke test (no React needed)
-
-You can verify the bridge works without the frontend:
+### Quick smoke test (no frontend)
 
 ```bash
-# Start just the server
-cd test-app
-npx tsx src/server.ts
+# Start the server
+cd test-app && npx tsx src/server.ts
 
-# In another terminal, check the /info endpoint
+# In another terminal — test info endpoint
+curl -X POST http://localhost:3000 -H "Content-Type: application/json" -d '{"method":"info"}'
+# -> {"agents":{"default":{"description":"Claude Code AI agent"}},"version":"1.0.0"}
+
+# REST-style also works:
 curl http://localhost:3000/info
-# → {"agents":{"default":{"description":"Claude Code AI agent"}},"version":"1.0.0"}
 ```
 
 ### Troubleshooting
 
-- **"Claude CLI not found"** — Make sure `claude` is in your PATH. Or set `claudeCliPath` in the config to the full path.
-- **"No active Claude session"** — The CLI hasn't connected yet. Wait a few seconds after starting the server. Check the terminal for `Session <id>: connected`.
-- **CORS errors in browser** — The bridge defaults to `corsOrigins: ["*"]`. If you changed it, make sure your frontend origin is included.
+- **"Claude CLI not found"** — Make sure `claude` is in your PATH, or set `claudeCliPath` in the config.
+- **"No active Claude session"** — The CLI hasn't connected via WebSocket yet. Wait a few seconds after starting the server. Check terminal for `Session <id>: connected`.
+- **No response from agent** — Check that the server logs show `Single transport: method="agent/run"` when you send a message. If you only see `method="info"` and `method="agent/connect"`, the agent connected successfully but may need a message to trigger a run.
+- **CORS errors** — The bridge defaults to `corsOrigins: ["*"]`. If you changed it, ensure your frontend origin is included.
 
 ## Development
 
 ```bash
 npm install
 npm run build        # Build ESM + CJS + types
-npm test             # Run tests
+npm test             # Run tests (19 tests)
 npm run typecheck    # Type check without emitting
 ```
 

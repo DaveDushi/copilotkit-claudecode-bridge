@@ -553,6 +553,16 @@ async function main() {
     }
   });
 
+  mgmtServer.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(`  [!] Management API port 3002 is already in use.`);
+      console.error(`      Kill the old process or pick another port.`);
+    } else {
+      console.error(`  [!] Management API error: ${err.message}`);
+    }
+    // Don't crash — AG-UI + WebSocket still work without the mgmt API
+  });
+
   mgmtServer.listen(3002, "127.0.0.1", () => {
     console.log(`  Management API:   http://localhost:3002`);
   });

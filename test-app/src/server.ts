@@ -1,6 +1,7 @@
 /**
  * Test server — spawns the bridge and exposes a management API
- * so the frontend can create, switch, and delete sessions.
+ * so the frontend can create, switch, and delete sessions,
+ * change models, switch modes, interrupt, and more.
  *
  * Run:  npx tsx src/server.ts
  */
@@ -47,19 +48,10 @@ async function main() {
     try {
       // ── GET /api/sessions ─────────────────────────────────────
       if (pathname === "/api/sessions" && req.method === "GET") {
-        const sessions: {
-          id: string;
-          workingDir: string;
-          status: string;
-          active: boolean;
-        }[] = [];
-        for (const [id, s] of (bridge as any).state.sessions.entries()) {
-          sessions.push({
-            id,
-            workingDir: s.workingDir,
-            status: typeof s.status === "string" ? s.status : "error",
-            active: bridge.activeSessionId === id,
-          });
+        const sessions = [];
+        for (const id of bridge.getSessionIds()) {
+          const info = bridge.getSessionInfo(id);
+          if (info) sessions.push(info);
         }
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ sessions }));
@@ -92,6 +84,87 @@ async function main() {
         console.log(`[test] Activated session ${sessionId.slice(0, 8)}`);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, activeSessionId: sessionId }));
+        return;
+      }
+
+      // ── PUT /api/sessions/:id/model ───────────────────────────
+      const modelMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/model$/);
+      if (modelMatch && req.method === "PUT") {
+        const sessionId = modelMatch[1];
+        const body = await readBody(req);
+        const { model } = JSON.parse(body);
+        if (!model || typeof model !== "string") {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "model is required" }));
+          return;
+        }
+        await bridge.setModel(sessionId, model);
+        console.log(`[test] Set model to ${model} for session ${sessionId.slice(0, 8)}`);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, model }));
+        return;
+      }
+
+      // ── PUT /api/sessions/:id/mode ────────────────────────────
+      const modeMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/mode$/);
+      if (modeMatch && req.method === "PUT") {
+        const sessionId = modeMatch[1];
+        const body = await readBody(req);
+        const { mode } = JSON.parse(body);
+        if (!mode || typeof mode !== "string") {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "mode is required" }));
+          return;
+        }
+        const result = await bridge.setPermissionMode(sessionId, mode as any);
+        console.log(`[test] Set mode to ${mode} for session ${sessionId.slice(0, 8)}`);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, mode: result.mode ?? mode }));
+        return;
+      }
+
+      // ── POST /api/sessions/:id/interrupt ──────────────────────
+      const interruptMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/interrupt$/);
+      if (interruptMatch && req.method === "POST") {
+        const sessionId = interruptMatch[1];
+        await bridge.interrupt(sessionId);
+        console.log(`[test] Interrupted session ${sessionId.slice(0, 8)}`);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+
+      // ── POST /api/sessions/:id/initialize ─────────────────────
+      const initMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/initialize$/);
+      if (initMatch && req.method === "POST") {
+        const sessionId = initMatch[1];
+        const body = await readBody(req);
+        const options = body ? JSON.parse(body) : {};
+        const result = await bridge.sendInitialize(sessionId, options);
+        console.log(`[test] Initialized session ${sessionId.slice(0, 8)}`);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+        return;
+      }
+
+      // ── GET /api/sessions/:id/capabilities ────────────────────
+      const capsMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/capabilities$/);
+      if (capsMatch && req.method === "GET") {
+        const sessionId = capsMatch[1];
+        const caps = bridge.getCapabilities(sessionId);
+        const initData = bridge.getInitData(sessionId);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ capabilities: caps, initData }));
+        return;
+      }
+
+      // ── GET /api/sessions/:id/mcp ─────────────────────────────
+      const mcpMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/mcp$/);
+      if (mcpMatch && req.method === "GET") {
+        const sessionId = mcpMatch[1];
+        const result = await bridge.getMcpStatus(sessionId);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
         return;
       }
 

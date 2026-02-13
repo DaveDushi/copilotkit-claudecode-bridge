@@ -26,26 +26,57 @@ export type {
 export type {
   ClaudeMessage,
   SystemMessage,
+  SystemSubtype,
   AssistantMessage,
   AssistantContent,
   ContentBlock,
   TextBlock,
   ToolUseBlock,
   ToolResultBlock,
+  ThinkingBlock,
   ResultMessage,
   StreamEventMessage,
   StreamEventPayload,
   StreamDelta,
   ControlRequestMessage,
   ControlRequestBody,
+  ControlRequestSubtype,
   ServerMessage,
+  ServerUserMessage,
+  ServerControlRequest,
+  ServerControlResponse,
+  ServerControlCancelRequest,
+  ServerUpdateEnvironmentVariables,
+  ControlResponseBody,
+  ToolApprovalResponse,
+  InitializeResponse,
+  McpStatusResponse,
+  RewindFilesResponse,
+  SetPermissionModeResponse,
   WsEvent,
+  // Permission types
+  PermissionMode,
+  PermissionDestination,
+  PermissionUpdate,
+  // MCP types
+  McpServerInfo,
+  McpServerConfig,
+  // Agent types
+  AgentDefinition,
+  // Usage types
+  Usage,
+  ModelUsage,
 } from "./server/types.js";
 
 export { parseClaudeMessage } from "./server/types.js";
 
 // Session types
-export type { Session, SessionStatus } from "./server/session.js";
+export type {
+  Session,
+  SessionStatus,
+  SessionCapabilities,
+  SessionInitData,
+} from "./server/session.js";
 export { createSession } from "./server/session.js";
 
 // Process utilities

@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import type { AppState } from "./state.js";
 import type { AguiEvent, RunAgentInput } from "./agui-events.js";
 import type { WsEvent } from "./types.js";
+import type { Session } from "./session.js";
 import { BridgeState, translateClaudeMessage } from "./bridge.js";
 
 export interface AguiServerConfig {
@@ -126,7 +127,7 @@ function handleInfo(
 function handleConnect(
   req: IncomingMessage,
   res: ServerResponse,
-  _state: AppState,
+  state: AppState,
   agentId: string,
 ): void {
   console.log(`[bridge] AG-UI connect request for agent: ${agentId}`);
@@ -154,12 +155,18 @@ function handleConnect(
     };
 
     push({ type: "RUN_STARTED", threadId, runId });
-    push({ type: "STATE_SNAPSHOT", snapshot: { agentId, status: "connected" } });
+
+    // Build snapshot with session capabilities
+    const session = state.activeSessionId
+      ? state.sessions.get(state.activeSessionId)
+      : null;
+
+    push({
+      type: "STATE_SNAPSHOT",
+      snapshot: buildCapabilitiesSnapshot(agentId, session),
+    });
 
     // Replay message history from the active session
-    const session = _state.activeSessionId
-      ? _state.sessions.get(_state.activeSessionId)
-      : null;
     if (session && session.messageHistory.length > 0) {
       replayHistory(session.messageHistory, runId, push);
     }
@@ -254,13 +261,18 @@ function handleConnectFromInput(
   };
 
   push({ type: "RUN_STARTED", threadId, runId });
-  push({ type: "STATE_SNAPSHOT", snapshot: { agentId, status: "connected" } });
 
-  // Replay message history from the active session so the UI shows prior chat
+  // Build snapshot with session capabilities
   const session = state.activeSessionId
     ? state.sessions.get(state.activeSessionId)
     : null;
 
+  push({
+    type: "STATE_SNAPSHOT",
+    snapshot: buildCapabilitiesSnapshot(agentId, session),
+  });
+
+  // Replay message history from the active session so the UI shows prior chat
   if (session && session.messageHistory.length > 0) {
     replayHistory(session.messageHistory, runId, push);
   }
@@ -518,6 +530,53 @@ function startBridgeLoop(
   );
 
   pollForSession();
+}
+
+/**
+ * Build a capabilities snapshot from the active session to include in STATE_SNAPSHOT events.
+ * This exposes slash_commands, skills, agents, mcp_servers, model, permissionMode, etc.
+ * to the CopilotKit frontend.
+ */
+function buildCapabilitiesSnapshot(
+  agentId: string,
+  session: Session | null | undefined,
+): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    agentId,
+    status: session ? "connected" : "disconnected",
+  };
+
+  if (!session) return base;
+
+  const caps = session.capabilities;
+  if (caps) {
+    base.model = caps.model;
+    base.permissionMode = caps.permissionMode;
+    base.tools = caps.tools;
+    base.cwd = caps.cwd;
+    base.claudeCodeVersion = caps.claudeCodeVersion;
+    base.slashCommands = caps.slashCommands;
+    base.agents = caps.agents;
+    base.skills = caps.skills;
+    base.mcpServers = caps.mcpServers;
+    base.plugins = caps.plugins;
+    base.apiKeySource = caps.apiKeySource;
+  }
+
+  const initData = session.initData;
+  if (initData) {
+    base.commands = initData.commands;
+    base.models = initData.models;
+    base.account = initData.account;
+    base.fastMode = initData.fastMode;
+  }
+
+  base.isCompacting = session.isCompacting;
+  base.totalCostUsd = session.totalCostUsd;
+  base.numTurns = session.numTurns;
+  base.sessionId = session.cliSessionId;
+
+  return base;
 }
 
 /**

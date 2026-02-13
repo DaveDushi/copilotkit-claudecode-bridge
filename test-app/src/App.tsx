@@ -5,12 +5,41 @@ import "@copilotkit/react-ui/styles.css";
 
 const MGMT_API = "http://localhost:3002";
 
+interface McpServer {
+  name: string;
+  status: string;
+}
+
+interface SessionCapabilities {
+  tools: string[];
+  model: string;
+  permissionMode: string;
+  cwd: string;
+  claudeCodeVersion: string;
+  slashCommands: string[];
+  agents: string[];
+  skills: string[];
+  mcpServers: McpServer[];
+}
+
 interface SessionInfo {
   id: string;
   workingDir: string;
   status: string;
   active: boolean;
+  capabilities: SessionCapabilities | null;
+  isCompacting: boolean;
+  totalCostUsd: number;
+  numTurns: number;
 }
+
+const MODES = [
+  { value: "default", label: "Default" },
+  { value: "plan", label: "Plan" },
+  { value: "acceptEdits", label: "Accept Edits" },
+  { value: "bypassPermissions", label: "Bypass" },
+  { value: "dontAsk", label: "Don't Ask" },
+];
 
 export default function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
@@ -19,6 +48,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   const activeSession = sessions.find((s) => s.active) ?? null;
+  const caps = activeSession?.capabilities ?? null;
 
   // ── Fetch sessions ──────────────────────────────────────────────
   const fetchSessions = useCallback(async () => {
@@ -93,10 +123,72 @@ export default function App() {
     [fetchSessions],
   );
 
+  // ── Set model ───────────────────────────────────────────────────
+  const setModel = useCallback(
+    async (model: string) => {
+      if (!activeSession) return;
+      try {
+        await fetch(`${MGMT_API}/api/sessions/${activeSession.id}/model`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model }),
+        });
+        await fetchSessions();
+      } catch (err: any) {
+        setError(err.message);
+      }
+    },
+    [activeSession, fetchSessions],
+  );
+
+  // ── Set permission mode ─────────────────────────────────────────
+  const setMode = useCallback(
+    async (mode: string) => {
+      if (!activeSession) return;
+      try {
+        await fetch(`${MGMT_API}/api/sessions/${activeSession.id}/mode`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode }),
+        });
+        await fetchSessions();
+      } catch (err: any) {
+        setError(err.message);
+      }
+    },
+    [activeSession, fetchSessions],
+  );
+
+  // ── Interrupt ───────────────────────────────────────────────────
+  const interrupt = useCallback(async () => {
+    if (!activeSession) return;
+    try {
+      await fetch(`${MGMT_API}/api/sessions/${activeSession.id}/interrupt`, {
+        method: "POST",
+      });
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }, [activeSession]);
+
   // ── Folder name from path ───────────────────────────────────────
   const folderName = (path: string) => {
     const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
     return parts[parts.length - 1] || path;
+  };
+
+  const statusColor = (status: string) => {
+    switch (status) {
+      case "connected":
+      case "idle":
+        return "#4caf50";
+      case "active":
+        return "#2196f3";
+      case "starting":
+        return "#ff9800";
+      default:
+        return "#bdbdbd";
+    }
   };
 
   return (
@@ -196,7 +288,7 @@ export default function App() {
                     (e.currentTarget as HTMLButtonElement).style.color = "#999";
                   }}
                 >
-                  ×
+                  x
                 </button>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
@@ -205,28 +297,22 @@ export default function App() {
                     width: 8,
                     height: 8,
                     borderRadius: "50%",
-                    background:
-                      s.status === "connected" || s.status === "idle"
-                        ? "#4caf50"
-                        : s.status === "active"
-                          ? "#2196f3"
-                          : s.status === "starting"
-                            ? "#ff9800"
-                            : "#bdbdbd",
+                    background: statusColor(s.status),
                     flexShrink: 0,
                   }}
                 />
                 <span
                   style={{
-                    fontSize: "12px",
+                    fontSize: "11px",
                     color: "#888",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
                   }}
-                  title={s.workingDir}
                 >
-                  {s.workingDir}
+                  {s.status}
+                  {s.capabilities?.model ? ` | ${s.capabilities.model.split("-").slice(-1)[0]}` : ""}
+                  {s.numTurns > 0 ? ` | ${s.numTurns}t` : ""}
                 </span>
               </div>
             </div>
@@ -286,32 +372,127 @@ export default function App() {
 
       {/* ── Main chat area ──────────────────────────────────────── */}
       <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        {/* ── Header with controls ────────────────────────────── */}
         <header
           style={{
-            padding: "10px 20px",
+            padding: "8px 16px",
             borderBottom: "1px solid #e0e0e0",
             background: "#fff",
             display: "flex",
             alignItems: "center",
             gap: 12,
+            flexWrap: "wrap",
           }}
         >
-          <h1 style={{ margin: 0, fontSize: "16px" }}>
+          <h1 style={{ margin: 0, fontSize: "15px", whiteSpace: "nowrap" }}>
             CopilotKit + Claude Bridge
           </h1>
-          {activeSession && (
-            <span
-              style={{
-                fontSize: "13px",
-                color: "#555",
-                fontFamily: "monospace",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {activeSession.workingDir}
-            </span>
+
+          {activeSession && caps && (
+            <>
+              {/* Model selector */}
+              <select
+                value={caps.model}
+                onChange={(e) => setModel(e.target.value)}
+                style={{
+                  fontSize: "12px",
+                  padding: "3px 6px",
+                  border: "1px solid #ccc",
+                  borderRadius: 4,
+                  background: "#fff",
+                }}
+                title="Model"
+              >
+                <option value={caps.model}>{caps.model}</option>
+                {caps.model !== "claude-sonnet-4-5-20250929" && (
+                  <option value="claude-sonnet-4-5-20250929">Sonnet 4.5</option>
+                )}
+                {caps.model !== "claude-opus-4-6" && (
+                  <option value="claude-opus-4-6">Opus 4.6</option>
+                )}
+                {caps.model !== "claude-haiku-4-5-20251001" && (
+                  <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+                )}
+              </select>
+
+              {/* Mode selector */}
+              <select
+                value={caps.permissionMode}
+                onChange={(e) => setMode(e.target.value)}
+                style={{
+                  fontSize: "12px",
+                  padding: "3px 6px",
+                  border: "1px solid #ccc",
+                  borderRadius: 4,
+                  background: "#fff",
+                }}
+                title="Permission Mode"
+              >
+                {MODES.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+
+              {/* Interrupt button */}
+              <button
+                onClick={interrupt}
+                disabled={activeSession.status !== "active"}
+                style={{
+                  fontSize: "12px",
+                  padding: "3px 8px",
+                  border: "1px solid #ccc",
+                  borderRadius: 4,
+                  background: activeSession.status === "active" ? "#ffebee" : "#f5f5f5",
+                  color: activeSession.status === "active" ? "#c62828" : "#999",
+                  cursor: activeSession.status === "active" ? "pointer" : "not-allowed",
+                }}
+                title="Interrupt current operation"
+              >
+                Stop
+              </button>
+
+              {/* Compacting indicator */}
+              {activeSession.isCompacting && (
+                <span style={{ fontSize: "11px", color: "#ff9800", fontWeight: 600 }}>
+                  Compacting...
+                </span>
+              )}
+
+              {/* Capabilities badges */}
+              <div style={{ display: "flex", gap: 4, marginLeft: "auto", flexWrap: "wrap" }}>
+                {caps.tools.length > 0 && (
+                  <Badge label={`${caps.tools.length} tools`} title={caps.tools.join(", ")} />
+                )}
+                {caps.slashCommands.length > 0 && (
+                  <Badge
+                    label={`${caps.slashCommands.length} commands`}
+                    title={caps.slashCommands.join(", ")}
+                  />
+                )}
+                {caps.skills.length > 0 && (
+                  <Badge label={`${caps.skills.length} skills`} title={caps.skills.join(", ")} />
+                )}
+                {caps.agents.length > 0 && (
+                  <Badge label={`${caps.agents.length} agents`} title={caps.agents.join(", ")} />
+                )}
+                {caps.mcpServers.length > 0 && (
+                  <Badge
+                    label={`${caps.mcpServers.length} MCP`}
+                    title={caps.mcpServers.map((s) => `${s.name} (${s.status})`).join(", ")}
+                    color={caps.mcpServers.every((s) => s.status === "connected") ? "#e8f5e9" : "#fff3e0"}
+                  />
+                )}
+                {activeSession.totalCostUsd > 0 && (
+                  <Badge
+                    label={`$${activeSession.totalCostUsd.toFixed(4)}`}
+                    title={`Total cost: $${activeSession.totalCostUsd.toFixed(4)}`}
+                    color="#f3e5f5"
+                  />
+                )}
+              </div>
+            </>
           )}
         </header>
 
@@ -341,5 +522,32 @@ export default function App() {
         </div>
       </main>
     </div>
+  );
+}
+
+function Badge({
+  label,
+  title,
+  color = "#e3f2fd",
+}: {
+  label: string;
+  title?: string;
+  color?: string;
+}) {
+  return (
+    <span
+      title={title}
+      style={{
+        fontSize: "11px",
+        padding: "2px 6px",
+        borderRadius: 3,
+        background: color,
+        color: "#333",
+        whiteSpace: "nowrap",
+        cursor: title ? "help" : "default",
+      }}
+    >
+      {label}
+    </span>
   );
 }

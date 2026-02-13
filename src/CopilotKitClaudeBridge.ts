@@ -5,11 +5,26 @@ import { v4 as uuidv4 } from "uuid";
 
 import { AppState } from "./server/state.js";
 import { createSession } from "./server/session.js";
+import type { SessionCapabilities, SessionInitData } from "./server/session.js";
 import { spawnClaude, monitorProcess } from "./server/process.js";
 import { createWsServer } from "./server/ws-server.js";
 import { createAguiServer } from "./server/agui-server.js";
 import type { SessionStatus } from "./server/session.js";
-import type { ClaudeMessage, ServerMessage } from "./server/types.js";
+import type {
+  ClaudeMessage,
+  ServerMessage,
+  ControlRequestBody,
+  PermissionMode,
+  PermissionUpdate,
+  McpServerConfig,
+  McpServerInfo,
+  AgentDefinition,
+  InitializeResponse,
+  McpStatusResponse,
+  RewindFilesResponse,
+  SetPermissionModeResponse,
+  ToolApprovalResponse,
+} from "./server/types.js";
 
 export interface BridgeConfig {
   /** WebSocket server port. Default: 0 (random). */
@@ -26,11 +41,20 @@ export interface BridgeConfig {
   claudeCliPath?: string;
   /** CORS origins for the HTTP server. Default: ["*"]. */
   corsOrigins?: string[];
+  /** Timeout in ms for control requests. Default: 30000. */
+  controlRequestTimeout?: number;
+  /** Whether to auto-initialize sessions after CLI connects. Default: false. */
+  autoInitialize?: boolean;
+  /** System prompt to pass during initialize. */
+  systemPrompt?: string;
+  /** System prompt to append during initialize. */
+  appendSystemPrompt?: string;
 }
 
 export interface BridgeEvents {
   "session:status": (sessionId: string, status: SessionStatus) => void;
   "session:message": (sessionId: string, message: ClaudeMessage) => void;
+  "session:capabilities": (sessionId: string, capabilities: SessionCapabilities) => void;
   ports: (wsPort: number, httpPort: number) => void;
 }
 
@@ -62,17 +86,35 @@ export class CopilotKitClaudeBridge extends EventEmitter {
       agentDescription: config.agentDescription ?? "Claude Code AI agent",
       claudeCliPath: config.claudeCliPath ?? "claude",
       corsOrigins: config.corsOrigins ?? ["*"],
+      controlRequestTimeout: config.controlRequestTimeout ?? 30_000,
+      autoInitialize: config.autoInitialize ?? false,
+      systemPrompt: config.systemPrompt ?? "",
+      appendSystemPrompt: config.appendSystemPrompt ?? "",
     };
     this.state = new AppState();
 
     // Forward events from state to the bridge
     this.state.on("session:status", (sessionId: string, status: string) => {
       this.emit("session:status", sessionId, status);
+
+      // Auto-initialize on first connect if configured
+      if (status === "connected" && this.config.autoInitialize) {
+        const session = this.state.sessions.get(sessionId);
+        if (session && !session.initialized) {
+          this.sendInitialize(sessionId).catch((err) => {
+            console.error(`[bridge] Auto-initialize failed for session ${sessionId.slice(0, 8)}: ${err.message}`);
+          });
+        }
+      }
     });
     this.state.on("session:message", (sessionId: string, message: unknown) => {
       this.emit("session:message", sessionId, message);
     });
   }
+
+  // ═══════════════════════════════════════════════════════════
+  // Lifecycle
+  // ═══════════════════════════════════════════════════════════
 
   /**
    * Start the WebSocket and HTTP servers.
@@ -145,6 +187,10 @@ export class CopilotKitClaudeBridge extends EventEmitter {
     this.aguiServer = null;
     console.log("[bridge] All servers stopped");
   }
+
+  // ═══════════════════════════════════════════════════════════
+  // Session Management
+  // ═══════════════════════════════════════════════════════════
 
   /**
    * Spawn a new Claude CLI session.
@@ -232,6 +278,13 @@ export class CopilotKitClaudeBridge extends EventEmitter {
     session.wsSend = null;
     session.status = "terminated";
 
+    // Clean up pending requests
+    for (const [reqId, pending] of session.pendingRequests) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error("Session terminated"));
+      session.pendingRequests.delete(reqId);
+    }
+
     if (session.process && !session.process.killed) {
       await new Promise<void>((resolve) => {
         const timeout = setTimeout(() => {
@@ -258,6 +311,10 @@ export class CopilotKitClaudeBridge extends EventEmitter {
     this.state.emitSessionStatus(sessionId, "terminated");
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // Messaging
+  // ═══════════════════════════════════════════════════════════
+
   /**
    * Send a user message to a session via WebSocket.
    */
@@ -277,13 +334,21 @@ export class CopilotKitClaudeBridge extends EventEmitter {
     session.wsSend(`${JSON.stringify(msg)}\n`);
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // Tool Approval (can_use_tool response)
+  // ═══════════════════════════════════════════════════════════
+
   /**
    * Approve or deny a tool use request.
+   *
+   * When approving, `updatedInput` is mandatory — it replaces the tool's input.
+   * Pass the original input unchanged if no modifications are needed.
+   * Optionally include `updatedPermissions` to save rules for future requests.
    */
   async approveTool(
     sessionId: string,
     requestId: string,
-    approved: boolean,
+    response: ToolApprovalResponse,
   ): Promise<void> {
     const session = this.state.sessions.get(sessionId);
     if (!session?.wsSend) {
@@ -293,16 +358,344 @@ export class CopilotKitClaudeBridge extends EventEmitter {
     const msg: ServerMessage = {
       type: "control_response",
       response: {
-        subtype: "can_use_tool",
+        subtype: "success",
         request_id: requestId,
-        response: {
-          behavior: approved ? "allow" : "deny",
-        },
+        response,
       },
     };
 
     session.wsSend(`${JSON.stringify(msg)}\n`);
   }
+
+  /**
+   * Convenience: approve a tool with original input unchanged.
+   */
+  async approveToolSimple(
+    sessionId: string,
+    requestId: string,
+    originalInput: unknown,
+  ): Promise<void> {
+    return this.approveTool(sessionId, requestId, {
+      behavior: "allow",
+      updatedInput: originalInput,
+    });
+  }
+
+  /**
+   * Convenience: deny a tool with a message.
+   */
+  async denyTool(
+    sessionId: string,
+    requestId: string,
+    message = "Tool use denied by user",
+    interrupt = false,
+  ): Promise<void> {
+    return this.approveTool(sessionId, requestId, {
+      behavior: "deny",
+      message,
+      interrupt,
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Control Requests (Server → CLI)
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Send a control request to Claude CLI and wait for the response.
+   * Uses request_id correlation for async request/response matching.
+   */
+  async sendControlRequest<T = unknown>(
+    sessionId: string,
+    request: Omit<ControlRequestBody, "subtype"> & { subtype: string },
+    timeoutMs?: number,
+  ): Promise<T> {
+    const session = this.state.sessions.get(sessionId);
+    if (!session?.wsSend) {
+      throw new Error(`No active WebSocket for session ${sessionId}`);
+    }
+
+    const requestId = uuidv4();
+    const timeout = timeoutMs ?? this.config.controlRequestTimeout;
+
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        session.pendingRequests.delete(requestId);
+        reject(new Error(`Control request "${request.subtype}" timed out after ${timeout}ms`));
+      }, timeout);
+
+      session.pendingRequests.set(requestId, {
+        resolve: resolve as (value: unknown) => void,
+        reject,
+        timer,
+      });
+
+      const msg = JSON.stringify({
+        type: "control_request",
+        request_id: requestId,
+        request,
+      });
+
+      session.wsSend!(`${msg}\n`);
+    });
+  }
+
+  /**
+   * Send the `initialize` control request. Must be called before first user message.
+   * Registers hooks, MCP servers, agents, system prompt, etc.
+   * Returns commands, models, and account info.
+   */
+  async sendInitialize(
+    sessionId: string,
+    options?: {
+      hooks?: Record<string, { matcher?: string; hookCallbackIds: string[]; timeout?: number }[]>;
+      sdkMcpServers?: string[];
+      jsonSchema?: Record<string, unknown>;
+      systemPrompt?: string;
+      appendSystemPrompt?: string;
+      agents?: Record<string, AgentDefinition>;
+    },
+  ): Promise<InitializeResponse> {
+    const session = this.state.sessions.get(sessionId);
+    if (!session) throw new Error(`Session ${sessionId} not found`);
+    if (session.initialized) throw new Error("Session already initialized");
+
+    const result = await this.sendControlRequest<InitializeResponse>(sessionId, {
+      subtype: "initialize",
+      hooks: options?.hooks,
+      sdkMcpServers: options?.sdkMcpServers,
+      jsonSchema: options?.jsonSchema,
+      systemPrompt: options?.systemPrompt ?? (this.config.systemPrompt || undefined),
+      appendSystemPrompt: options?.appendSystemPrompt ?? (this.config.appendSystemPrompt || undefined),
+      agents_config: options?.agents,
+    });
+
+    session.initialized = true;
+    session.initData = {
+      commands: result.commands ?? [],
+      models: result.models ?? [],
+      account: result.account ?? {},
+      outputStyle: result.output_style ?? "",
+      availableOutputStyles: result.available_output_styles ?? [],
+      fastMode: result.fast_mode,
+    };
+
+    console.log(
+      `[bridge] Session ${sessionId.slice(0, 8)} initialized: ` +
+      `${session.initData.commands.length} commands, ${session.initData.models.length} models`,
+    );
+
+    this.emit("session:capabilities", sessionId, session.capabilities);
+
+    return result;
+  }
+
+  /**
+   * Interrupt the current agent turn.
+   */
+  async interrupt(sessionId: string): Promise<void> {
+    await this.sendControlRequest(sessionId, { subtype: "interrupt" });
+  }
+
+  /**
+   * Change the model at runtime.
+   * Pass "default" to reset to the default model.
+   */
+  async setModel(sessionId: string, model: string): Promise<void> {
+    await this.sendControlRequest(sessionId, {
+      subtype: "set_model",
+      model,
+    });
+
+    // Update local capabilities
+    const session = this.state.sessions.get(sessionId);
+    if (session?.capabilities) {
+      session.capabilities.model = model;
+    }
+  }
+
+  /**
+   * Change the permission mode at runtime.
+   */
+  async setPermissionMode(sessionId: string, mode: PermissionMode): Promise<SetPermissionModeResponse> {
+    const result = await this.sendControlRequest<SetPermissionModeResponse>(sessionId, {
+      subtype: "set_permission_mode",
+      mode,
+    });
+
+    // Update local capabilities
+    const session = this.state.sessions.get(sessionId);
+    if (session?.capabilities) {
+      session.capabilities.permissionMode = result.mode ?? mode;
+    }
+
+    return result;
+  }
+
+  /**
+   * Set the maximum thinking tokens budget.
+   * Pass null to remove the limit.
+   */
+  async setMaxThinkingTokens(sessionId: string, maxThinkingTokens: number | null): Promise<void> {
+    await this.sendControlRequest(sessionId, {
+      subtype: "set_max_thinking_tokens",
+      max_thinking_tokens: maxThinkingTokens,
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // MCP Management
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Get the status of all MCP servers.
+   */
+  async getMcpStatus(sessionId: string): Promise<McpStatusResponse> {
+    return this.sendControlRequest<McpStatusResponse>(sessionId, {
+      subtype: "mcp_status",
+    });
+  }
+
+  /**
+   * Reconnect an MCP server by name.
+   */
+  async mcpReconnect(sessionId: string, serverName: string): Promise<void> {
+    await this.sendControlRequest(sessionId, {
+      subtype: "mcp_reconnect",
+      serverName,
+    });
+  }
+
+  /**
+   * Enable or disable an MCP server.
+   */
+  async mcpToggle(sessionId: string, serverName: string, enabled: boolean): Promise<void> {
+    await this.sendControlRequest(sessionId, {
+      subtype: "mcp_toggle",
+      serverName,
+      enabled,
+    });
+  }
+
+  /**
+   * Configure MCP servers (set the full server configuration).
+   */
+  async mcpSetServers(sessionId: string, servers: Record<string, McpServerConfig>): Promise<void> {
+    await this.sendControlRequest(sessionId, {
+      subtype: "mcp_set_servers",
+      servers,
+    });
+  }
+
+  /**
+   * Send a JSON-RPC message to an MCP server.
+   */
+  async mcpMessage(sessionId: string, serverName: string, message: unknown): Promise<unknown> {
+    return this.sendControlRequest(sessionId, {
+      subtype: "mcp_message",
+      server_name: serverName,
+      message,
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // File Operations
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Rewind files to a checkpoint (undo changes made after a specific message).
+   */
+  async rewindFiles(
+    sessionId: string,
+    userMessageId: string,
+    dryRun = false,
+  ): Promise<RewindFilesResponse> {
+    return this.sendControlRequest<RewindFilesResponse>(sessionId, {
+      subtype: "rewind_files",
+      user_message_id: userMessageId,
+      dry_run: dryRun,
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Environment
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Update environment variables in the CLI process.
+   */
+  async updateEnvironmentVariables(sessionId: string, variables: Record<string, string>): Promise<void> {
+    const session = this.state.sessions.get(sessionId);
+    if (!session?.wsSend) {
+      throw new Error(`No active WebSocket for session ${sessionId}`);
+    }
+
+    const msg = JSON.stringify({
+      type: "update_environment_variables",
+      variables,
+    });
+
+    session.wsSend(`${msg}\n`);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Session Info Getters
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Get capabilities for a session (populated after system/init).
+   */
+  getCapabilities(sessionId: string): SessionCapabilities | null {
+    return this.state.sessions.get(sessionId)?.capabilities ?? null;
+  }
+
+  /**
+   * Get init data for a session (populated after sendInitialize).
+   */
+  getInitData(sessionId: string): SessionInitData | null {
+    return this.state.sessions.get(sessionId)?.initData ?? null;
+  }
+
+  /**
+   * Get all session IDs.
+   */
+  getSessionIds(): string[] {
+    return Array.from(this.state.sessions.keys());
+  }
+
+  /**
+   * Get session info (for API responses).
+   */
+  getSessionInfo(sessionId: string): {
+    id: string;
+    status: string;
+    workingDir: string;
+    active: boolean;
+    capabilities: SessionCapabilities | null;
+    initData: SessionInitData | null;
+    isCompacting: boolean;
+    totalCostUsd: number;
+    numTurns: number;
+  } | null {
+    const session = this.state.sessions.get(sessionId);
+    if (!session) return null;
+
+    return {
+      id: session.id,
+      status: typeof session.status === "string" ? session.status : "error",
+      workingDir: session.workingDir,
+      active: this.state.activeSessionId === sessionId,
+      capabilities: session.capabilities,
+      initData: session.initData,
+      isCompacting: session.isCompacting,
+      totalCostUsd: session.totalCostUsd,
+      numTurns: session.numTurns,
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // HTTP Handler
+  // ═══════════════════════════════════════════════════════════
 
   /**
    * Returns a request handler function for embedding in Express/Hono/etc.

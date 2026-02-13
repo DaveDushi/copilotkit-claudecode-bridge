@@ -67,6 +67,7 @@ export default function App() {
   // ── Activate session ────────────────────────────────────────────
   const activateSession = useCallback(
     async (id: string) => {
+      if (activeSession?.id === id) return;
       try {
         await fetch(`${MGMT_API}/api/sessions/${id}/activate`, {
           method: "PUT",
@@ -76,7 +77,7 @@ export default function App() {
         setError(err.message);
       }
     },
-    [fetchSessions],
+    [fetchSessions, activeSession?.id],
   );
 
   // ── Delete session ──────────────────────────────────────────────
@@ -315,17 +316,28 @@ export default function App() {
         </header>
 
         <div style={{ flex: 1, overflow: "hidden" }}>
-          <CopilotKit runtimeUrl="http://localhost:3000" agent="default">
-            <CopilotChat
-              instructions="You are a helpful coding assistant powered by Claude Code."
-              labels={{
-                title: "Claude Code Agent",
-                initial: activeSession
-                  ? `Working in ${activeSession.workingDir}. Ask me anything about this codebase.`
-                  : "Create a session in the sidebar to get started.",
-              }}
-            />
-          </CopilotKit>
+          {activeSession ? (
+            // key= forces CopilotKit to remount when switching sessions.
+            // The chat UI resets but Claude's backend session retains full
+            // conversation history, so context is preserved server-side.
+            <CopilotKit
+              key={activeSession.id}
+              runtimeUrl="http://localhost:3000"
+              agent="default"
+            >
+              <CopilotChat
+                instructions="You are a helpful coding assistant powered by Claude Code."
+                labels={{
+                  title: "Claude Code Agent",
+                  initial: `Working in ${activeSession.workingDir}. Ask me anything about this codebase.`,
+                }}
+              />
+            </CopilotKit>
+          ) : (
+            <div style={{ padding: 40, textAlign: "center", color: "#888" }}>
+              Create a session in the sidebar to get started.
+            </div>
+          )}
         </div>
       </main>
     </div>

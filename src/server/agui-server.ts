@@ -145,34 +145,36 @@ function handleConnect(
       // Tolerate invalid JSON for connect — it's a handshake
     }
 
-    // Set up SSE response
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    });
-
     const threadId = input.threadId ?? uuidv4();
     const runId = input.runId ?? uuidv4();
 
-    const sendEvent = (event: AguiEvent) => {
-      const json = JSON.stringify(event);
-      res.write(`data: ${json}\n\n`);
+    const lines: string[] = [];
+    const push = (event: Record<string, unknown>) => {
+      lines.push(`data: ${JSON.stringify(event)}`, "");
     };
 
-    sendEvent({ type: "RUN_STARTED", threadId, runId });
+    push({ type: "RUN_STARTED", threadId, runId });
+    push({ type: "STATE_SNAPSHOT", snapshot: { agentId, status: "connected" } });
 
-    // Send a state snapshot so CopilotKit knows the agent is alive
-    sendEvent({
-      type: "STATE_SNAPSHOT",
-      snapshot: {
-        agentId,
-        status: "connected",
-      },
+    // Replay message history from the active session
+    const session = _state.activeSessionId
+      ? _state.sessions.get(_state.activeSessionId)
+      : null;
+    if (session && session.messageHistory.length > 0) {
+      replayHistory(session.messageHistory, runId, push);
+    }
+
+    push({ type: "RUN_FINISHED", threadId, runId });
+    lines.push("");
+
+    const body2 = lines.join("\n");
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "close",
+      "Content-Length": Buffer.byteLength(body2),
     });
-
-    sendEvent({ type: "RUN_FINISHED", threadId, runId });
-    res.end();
+    res.end(body2);
   });
 }
 
@@ -221,8 +223,8 @@ function handleSingleTransport(
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(infoBody);
     } else if (method === "agent/connect") {
-      // Single transport connect — same as handleConnect
-      handleConnectFromInput(res, innerBody as Partial<RunAgentInput>, agentId);
+      // Single transport connect — replay message history if available
+      handleConnectFromInput(res, state, innerBody as Partial<RunAgentInput>, agentId);
     } else if (method === "agent/stop") {
       // Stop request — acknowledge and return
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -239,30 +241,41 @@ function handleSingleTransport(
 
 function handleConnectFromInput(
   res: ServerResponse,
+  state: AppState,
   input: Partial<RunAgentInput>,
   agentId: string,
 ): void {
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-  });
-
   const threadId = input.threadId ?? uuidv4();
   const runId = input.runId ?? uuidv4();
 
-  const sendEvent = (event: AguiEvent) => {
-    const json = JSON.stringify(event);
-    res.write(`data: ${json}\n\n`);
+  const lines: string[] = [];
+  const push = (event: Record<string, unknown>) => {
+    lines.push(`data: ${JSON.stringify(event)}`, "");
   };
 
-  sendEvent({ type: "RUN_STARTED", threadId, runId });
-  sendEvent({
-    type: "STATE_SNAPSHOT",
-    snapshot: { agentId, status: "connected" },
+  push({ type: "RUN_STARTED", threadId, runId });
+  push({ type: "STATE_SNAPSHOT", snapshot: { agentId, status: "connected" } });
+
+  // Replay message history from the active session so the UI shows prior chat
+  const session = state.activeSessionId
+    ? state.sessions.get(state.activeSessionId)
+    : null;
+
+  if (session && session.messageHistory.length > 0) {
+    replayHistory(session.messageHistory, runId, push);
+  }
+
+  push({ type: "RUN_FINISHED", threadId, runId });
+  lines.push(""); // trailing newline
+
+  const body = lines.join("\n");
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "close",
+    "Content-Length": Buffer.byteLength(body),
   });
-  sendEvent({ type: "RUN_FINISHED", threadId, runId });
-  res.end();
+  res.end(body);
 }
 
 function handleRun(
@@ -505,4 +518,57 @@ function startBridgeLoop(
   );
 
   pollForSession();
+}
+
+/**
+ * Replays a session's message history as AG-UI events during an agent/connect
+ * response. This lets CopilotKit repopulate the chat UI when switching sessions.
+ *
+ * We walk the messageHistory and emit:
+ *  - User messages  → TEXT_MESSAGE_START(role=user) + CONTENT + END
+ *  - Assistant text → TEXT_MESSAGE_START(role=assistant) + CONTENT + END
+ *  - Tool calls are omitted (implementation details, not user-facing chat)
+ */
+function replayHistory(
+  history: unknown[],
+  runId: string,
+  push: (event: Record<string, unknown>) => void,
+): void {
+  let msgCounter = 0;
+
+  for (const entry of history) {
+    if (!entry || typeof entry !== "object") continue;
+    const e = entry as Record<string, unknown>;
+
+    // User messages stored by our AG-UI handler
+    if (e.type === "user_message" && typeof e.content === "string") {
+      const msgId = `${runId}-replay-${msgCounter++}`;
+      push({ type: "TEXT_MESSAGE_START", messageId: msgId, role: "user" });
+      push({ type: "TEXT_MESSAGE_CONTENT", messageId: msgId, delta: e.content });
+      push({ type: "TEXT_MESSAGE_END", messageId: msgId });
+      continue;
+    }
+
+    // Assistant messages from Claude CLI (final complete message with content blocks)
+    if (e.type === "assistant") {
+      const msg = e.message as Record<string, unknown> | undefined;
+      const content = msg?.content;
+      if (!Array.isArray(content)) continue;
+
+      for (const block of content) {
+        if (!block || typeof block !== "object") continue;
+        const b = block as Record<string, unknown>;
+
+        if (b.type === "text" && typeof b.text === "string") {
+          const msgId = `${runId}-replay-${msgCounter++}`;
+          push({ type: "TEXT_MESSAGE_START", messageId: msgId, role: "assistant" });
+          push({ type: "TEXT_MESSAGE_CONTENT", messageId: msgId, delta: b.text });
+          push({ type: "TEXT_MESSAGE_END", messageId: msgId });
+        }
+      }
+      continue;
+    }
+
+    // stream_event, result, control_request etc. — skip during replay
+  }
 }

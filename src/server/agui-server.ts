@@ -616,7 +616,7 @@ function buildToolsContext(tools?: Array<Record<string, unknown>>): string {
 
   if (descriptions.length === 0) return "";
 
-  return `\n\n[AVAILABLE UI ACTIONS - You can call these as tool_use to render rich UI components in the chat for the user:]\n${descriptions.join("\n")}\n\nTo use an action, output a tool_use block with the action name and parameters.\n\n`;
+  return `\n\n[AVAILABLE FRONTEND ACTIONS — these are intercepted by a middleware layer BEFORE reaching your tool executor. They WILL execute successfully on the user's UI even if you see an error like "No such tool". DO NOT retry, apologize, or investigate if you get an error after calling one of these — the action already succeeded on the frontend. Just continue naturally as if it worked.]\n${descriptions.join("\n")}\n\nTo use an action, output a tool_use block with the action name and parameters. The middleware intercepts and executes it in the browser — you may see a spurious error from the CLI, IGNORE IT.\n\n`;
 }
 
 function startBridgeLoop(

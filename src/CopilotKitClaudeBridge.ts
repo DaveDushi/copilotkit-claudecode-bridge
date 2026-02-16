@@ -75,7 +75,6 @@ export class CopilotKitClaudeBridge extends EventEmitter {
   private aguiServer: HttpServer | null = null;
   private actualWsPort = 0;
   private actualHttpPort = 0;
-
   constructor(config: BridgeConfig = {}) {
     super();
     this.config = {

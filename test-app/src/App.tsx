@@ -31,6 +31,8 @@ import {
   useWorkspaceActions,
   useWorkspaceSuggestions,
 } from "./hooks/useWorkspace";
+import { useToolApproval } from "./hooks/useToolApproval";
+import type { ToolApprovalRequest } from "./hooks/useToolApproval";
 import type { Task, FileEntry, ActivityEvent } from "./types";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -89,7 +91,11 @@ function Workspace({ session }: { session: SessionInfo }) {
   // 3. SUGGESTIONS: Smart prompts based on current workspace state.
   useWorkspaceSuggestions(scratchpad, tasks, files);
 
-  // 4. TOOL RENDERERS: Rich cards for Claude's built-in tools (registered via component below).
+  // 4. TOOL APPROVAL: Listen for Claude Code tool approval requests
+  //    and provide approve/deny UI so tools don't get stuck.
+  const { pending: pendingApprovals, approve, deny, approveAll } = useToolApproval();
+
+  // 5. TOOL RENDERERS: Rich cards for Claude's built-in tools (registered via component below).
 
   // ── Task board handlers ────────────────────────────────────────────
   const handleToggleTask = useCallback((id: string) => {
@@ -180,6 +186,16 @@ function Workspace({ session }: { session: SessionInfo }) {
             }} />
           </div>
         </header>
+
+        {/* ── Tool Approval Banner ──────────────────────────────────── */}
+        {pendingApprovals.length > 0 && (
+          <ToolApprovalBanner
+            requests={pendingApprovals}
+            onApprove={approve}
+            onDeny={deny}
+            onApproveAll={approveAll}
+          />
+        )}
 
         {/* ── Panel tabs ───────────────────────────────────────────── */}
         <div style={{
@@ -423,6 +439,143 @@ export default function App() {
 // ═══════════════════════════════════════════════════════════════════════════
 // Tiny UI components
 // ═══════════════════════════════════════════════════════════════════════════
+
+function ToolApprovalBanner({
+  requests,
+  onApprove,
+  onDeny,
+  onApproveAll,
+}: {
+  requests: ToolApprovalRequest[];
+  onApprove: (req: ToolApprovalRequest) => void;
+  onDeny: (req: ToolApprovalRequest, reason?: string) => void;
+  onApproveAll: () => void;
+}) {
+  return (
+    <div style={{
+      background: "#fff8e1",
+      borderBottom: "1px solid #ffe082",
+      padding: "8px 16px",
+      flexShrink: 0,
+    }}>
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        marginBottom: requests.length > 1 ? 6 : 0,
+      }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: "#f57f17" }}>
+          {requests.length} tool{requests.length > 1 ? "s" : ""} waiting for approval
+        </span>
+        {requests.length > 1 && (
+          <button
+            onClick={onApproveAll}
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              background: "#4caf50",
+              color: "#fff",
+              border: "none",
+              borderRadius: 4,
+              padding: "3px 10px",
+              cursor: "pointer",
+            }}
+          >
+            Approve All
+          </button>
+        )}
+      </div>
+      {requests.map((req) => (
+        <div
+          key={req.requestId}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "6px 10px",
+            marginTop: 4,
+            background: "#fff",
+            borderRadius: 6,
+            border: "1px solid #ffe082",
+            fontSize: 12,
+          }}
+        >
+          <span style={{
+            fontWeight: 700,
+            fontFamily: "monospace",
+            color: "#e65100",
+            minWidth: 50,
+          }}>
+            {req.toolName}
+          </span>
+          <span style={{
+            flex: 1,
+            fontFamily: "monospace",
+            fontSize: 11,
+            color: "#555",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}>
+            {formatToolInput(req.toolName, req.toolInput)}
+          </span>
+          <button
+            onClick={() => onApprove(req)}
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              background: "#4caf50",
+              color: "#fff",
+              border: "none",
+              borderRadius: 4,
+              padding: "3px 10px",
+              cursor: "pointer",
+            }}
+          >
+            Allow
+          </button>
+          <button
+            onClick={() => onDeny(req)}
+            style={{
+              fontSize: 11,
+              fontWeight: 500,
+              background: "transparent",
+              color: "#c62828",
+              border: "1px solid #ef9a9a",
+              borderRadius: 4,
+              padding: "2px 8px",
+              cursor: "pointer",
+            }}
+          >
+            Deny
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Format tool input for display — show the most relevant field */
+function formatToolInput(toolName: string, input: Record<string, unknown>): string {
+  switch (toolName) {
+    case "Bash":
+      return (input.command as string) ?? JSON.stringify(input);
+    case "Read":
+      return (input.file_path as string) ?? JSON.stringify(input);
+    case "Write":
+      return (input.file_path as string) ?? JSON.stringify(input);
+    case "Edit":
+      return (input.file_path as string) ?? JSON.stringify(input);
+    case "Glob":
+      return (input.pattern as string) ?? JSON.stringify(input);
+    case "Grep":
+      return `/${input.pattern ?? ""}/ ${input.path ? `in ${input.path}` : ""}`;
+    case "Task":
+      return (input.description as string) ?? JSON.stringify(input);
+    default:
+      return JSON.stringify(input).slice(0, 120);
+  }
+}
 
 function StatusBadge({ label, color }: { label: string; color: string }) {
   return (

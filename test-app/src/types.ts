@@ -1,5 +1,6 @@
 export type CanvasComponentType =
   | "data-table"
+  | "editable-table"
   | "line-chart"
   | "bar-chart"
   | "json-viewer"

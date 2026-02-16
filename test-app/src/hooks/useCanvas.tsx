@@ -13,7 +13,7 @@ import { useCopilotReadable, useCopilotAction } from "@copilotkit/react-core";
 import type { CanvasComponent, CanvasComponentType } from "../types";
 
 const VALID_TYPES: CanvasComponentType[] = [
-  "data-table", "line-chart", "bar-chart",
+  "data-table", "editable-table", "line-chart", "bar-chart",
   "json-viewer", "key-value", "progress-dashboard",
 ];
 
@@ -37,6 +37,7 @@ export function useCanvas(
       "",
       "Component types and their data formats:",
       '  data-table: { "columns": [{"key":"name","label":"Name"}], "rows": [{"name":"foo"}] }',
+      '  editable-table: same format as data-table, but user can edit cells, add/delete rows, and AI can see + make edits via scoped actions',
       '  line-chart: { "xKey": "month", "yKeys": ["revenue"], "data": [{"month":"Jan","revenue":100}] }',
       '  bar-chart:  same format as line-chart',
       '  json-viewer: any JSON object or array (pass directly as data)',
@@ -75,6 +76,11 @@ export function useCanvas(
       // data arrives as a JSON string — parse it
       const parsedData = typeof data === "string" ? JSON.parse(data) : data;
       const componentId = id || `canvas-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+      // Inject table ID for editable tables so they can scope their CopilotKit actions
+      if (type === "editable-table") {
+        parsedData._tableId = componentId;
+      }
 
       setComponents((prev) => {
         const existing = prev.findIndex((c) => c.id === componentId);

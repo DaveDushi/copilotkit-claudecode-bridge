@@ -52,6 +52,10 @@ function Workspace() {
         "  - Summary stats / metadata -> spawnCanvas type \"key-value\"",
         "  - Status / progress -> spawnCanvas type \"progress-dashboard\"",
         "",
+        "For collaborative data editing, use type \"editable-table\" instead of \"data-table\".",
+        "  - User can double-click cells to edit, add rows, and delete rows",
+        "  - You can see live table state via readable context and edit via editTableCells_<id>, addTableRows_<id>, deleteTableRows_<id>",
+        "",
         "Don't just describe data in text. Show it on the canvas.",
       ].join("\n")}
       labels={{

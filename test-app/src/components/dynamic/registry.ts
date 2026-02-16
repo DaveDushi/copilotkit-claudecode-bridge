@@ -1,5 +1,6 @@
 import type { CanvasComponentType } from "../../types";
 import { DataTable } from "./DataTable";
+import { EditableTable } from "./EditableTable";
 import { LineChartView } from "./LineChart";
 import { BarChartView } from "./BarChart";
 import { JsonViewer } from "./JsonViewer";
@@ -11,6 +12,7 @@ export const CANVAS_REGISTRY: Record<
   { component: React.FC<{ data: any }>; label: string; color: string }
 > = {
   "data-table": { component: DataTable, label: "Table", color: "#e3f2fd" },
+  "editable-table": { component: EditableTable, label: "Editable", color: "#e8eaf6" },
   "line-chart": { component: LineChartView, label: "Line Chart", color: "#e8f5e9" },
   "bar-chart": { component: BarChartView, label: "Bar Chart", color: "#fff3e0" },
   "json-viewer": { component: JsonViewer, label: "JSON", color: "#f3e5f5" },

@@ -14,7 +14,7 @@ import type { CanvasComponent, CanvasComponentType } from "../types";
 
 const VALID_TYPES: CanvasComponentType[] = [
   "data-table", "editable-table", "line-chart", "bar-chart",
-  "json-viewer", "key-value", "progress-dashboard",
+  "json-viewer", "key-value", "progress-dashboard", "custom",
 ];
 
 export function useCanvas(
@@ -43,6 +43,9 @@ export function useCanvas(
       '  json-viewer: any JSON object or array (pass directly as data)',
       '  key-value:  { "entries": [{"key":"Name","value":"MyProject"}] }',
       '  progress-dashboard: { "items": [{"label":"Tests","value":85,"max":100,"status":"success"}] }',
+      '  custom: { "html": "<div>Any HTML/CSS you want — rendered in a sandboxed iframe</div>" }',
+      "",
+      "Use \"custom\" when none of the built-in types fit. You can include <style> tags, SVG, flexbox, grid, interactive JS — anything.",
       "",
       "Pass an id to update an existing component instead of creating a new one.",
     ].join("\n"),

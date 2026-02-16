@@ -6,7 +6,7 @@
  *   3001  WS     (Claude CLI connects here)
  *   3002  Mgmt   (tool approval SSE + response)
  *
- * Auto-spawns one session on startup. No session management UI needed.
+ * User picks a workspace folder from the UI, then a session is spawned.
  */
 import { createServer } from "node:http";
 import { CopilotKitClaudeBridge } from "copilotkit-claude-bridge";
@@ -75,6 +75,27 @@ async function main() {
         return;
       }
 
+      // GET /api/sessions — check if a session exists
+      if (pathname === "/api/sessions" && req.method === "GET") {
+        const ids = bridge.getSessionIds();
+        const sessions = ids.map((id) => bridge.getSessionInfo(id)).filter(Boolean);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ sessions }));
+        return;
+      }
+
+      // POST /api/sessions — create a session with a chosen workspace folder
+      if (pathname === "/api/sessions" && req.method === "POST") {
+        const body = JSON.parse(await readBody(req));
+        const workingDir = body.workingDir as string;
+        if (!workingDir) { res.writeHead(400); res.end('{"error":"workingDir required"}'); return; }
+        const sessionId = await bridge.spawnSession(workingDir);
+        console.log(`[server] Session ${sessionId.slice(0, 8)} spawned in ${workingDir}`);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ sessionId, workingDir }));
+        return;
+      }
+
       // POST /api/sessions/:id/tool-approval — approve or deny
       const match = pathname.match(/^\/api\/sessions\/([^/]+)\/tool-approval$/);
       if (match && req.method === "POST") {
@@ -108,10 +129,6 @@ async function main() {
     console.log(`  Management API:   http://localhost:3002`);
   });
 
-  // ── Auto-spawn session ────────────────────────────────────────────
-  const workingDir = process.argv[2] || process.cwd();
-  const sessionId = await bridge.spawnSession(workingDir);
-  console.log(`\n  Session ready:    ${sessionId.slice(0, 8)} (${workingDir})`);
   console.log(`\n  Open http://localhost:5173 to start.\n`);
 
   process.on("SIGINT", async () => {

@@ -5,7 +5,7 @@
  * Tool approval banner for human-in-the-loop control.
  * That's it. Nothing else.
  */
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { CopilotKit } from "@copilotkit/react-core";
 import { CopilotSidebar } from "@copilotkit/react-ui";
 import "@copilotkit/react-ui/styles.css";
@@ -18,6 +18,7 @@ import type { ToolApprovalRequest } from "./hooks/useToolApproval";
 import type { CanvasComponent } from "./types";
 
 const RUNTIME_URL = "http://localhost:3000";
+const MGMT_API = "http://localhost:3002";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Inner workspace — has access to CopilotKit context
@@ -55,6 +56,12 @@ function Workspace() {
         "For collaborative data editing, use type \"editable-table\" instead of \"data-table\".",
         "  - User can double-click cells to edit, add rows, and delete rows",
         "  - You can see live table state via readable context and edit via editTableCells_<id>, addTableRows_<id>, deleteTableRows_<id>",
+        "",
+        "For ANYTHING else that doesn't fit the built-in types, use type \"custom\":",
+        "  - data format: {\"html\": \"<div>...any HTML/CSS you want...</div>\"}",
+        "  - You can include <style> tags, inline styles, SVG, flexbox, grid, etc.",
+        "  - The HTML renders in a sandboxed iframe — scripts are allowed but isolated",
+        "  - Use this for: custom layouts, diagrams, styled reports, interactive widgets, anything visual",
         "",
         "Don't just describe data in text. Show it on the canvas.",
       ].join("\n")}
@@ -111,10 +118,107 @@ function Workspace() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// App shell — CopilotKit provider
+// App shell — folder picker → CopilotKit workspace
 // ═══════════════════════════════════════════════════════════════════════════
 
 export default function App() {
+  const [sessionReady, setSessionReady] = useState(false);
+  const [folder, setFolder] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [checking, setChecking] = useState(true);
+
+  // On mount, check if server already has a session (e.g. page refresh)
+  useEffect(() => {
+    fetch(`${MGMT_API}/api/sessions`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.sessions?.length > 0) setSessionReady(true);
+      })
+      .catch(() => {})
+      .finally(() => setChecking(false));
+  }, []);
+
+  const createSession = useCallback(async () => {
+    const dir = folder.trim();
+    if (!dir) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${MGMT_API}/api/sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workingDir: dir }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || "Failed to create session"); return; }
+      setSessionReady(true);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [folder]);
+
+  if (checking) return null;
+
+  if (!sessionReady) {
+    return (
+      <div style={{
+        height: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontFamily: "system-ui, sans-serif",
+        background: "#f8f9fa",
+      }}>
+        <div style={{ width: 440, textAlign: "center" }}>
+          <div style={{ fontSize: 48, opacity: 0.3, marginBottom: 8 }}>&#9671;</div>
+          <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>Claude Code Canvas</h1>
+          <p style={{ color: "#666", marginBottom: 24, fontSize: 14 }}>
+            Choose a workspace folder to get started.
+          </p>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              value={folder}
+              onChange={(e) => setFolder(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") createSession(); }}
+              placeholder="Enter folder path..."
+              style={{
+                flex: 1,
+                padding: "10px 12px",
+                fontSize: 13,
+                border: "1px solid #ddd",
+                borderRadius: 6,
+                fontFamily: "monospace",
+                outline: "none",
+              }}
+              disabled={loading}
+              autoFocus
+            />
+            <button
+              onClick={createSession}
+              disabled={loading || !folder.trim()}
+              style={{
+                padding: "10px 24px",
+                fontSize: 13,
+                fontWeight: 600,
+                background: loading ? "#999" : "#0066cc",
+                color: "#fff",
+                border: "none",
+                borderRadius: 6,
+                cursor: loading ? "not-allowed" : "pointer",
+              }}
+            >
+              {loading ? "Connecting..." : "Start"}
+            </button>
+          </div>
+          {error && <p style={{ color: "#c62828", fontSize: 12, marginTop: 8 }}>{error}</p>}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <CopilotKit runtimeUrl={RUNTIME_URL} agent="default">
       <Workspace />

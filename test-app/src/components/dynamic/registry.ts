@@ -6,6 +6,7 @@ import { BarChartView } from "./BarChart";
 import { JsonViewer } from "./JsonViewer";
 import { KeyValueGrid } from "./KeyValueGrid";
 import { ProgressDashboard } from "./ProgressDashboard";
+import { CustomHtml } from "./CustomHtml";
 
 export const CANVAS_REGISTRY: Record<
   CanvasComponentType,
@@ -18,4 +19,5 @@ export const CANVAS_REGISTRY: Record<
   "json-viewer": { component: JsonViewer, label: "JSON", color: "#f3e5f5" },
   "key-value": { component: KeyValueGrid, label: "Key-Value", color: "#fce4ec" },
   "progress-dashboard": { component: ProgressDashboard, label: "Dashboard", color: "#e0f2f1" },
+  "custom": { component: CustomHtml, label: "Custom", color: "#e8eaf6" },
 };

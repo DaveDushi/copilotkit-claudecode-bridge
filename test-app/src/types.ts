@@ -5,7 +5,8 @@ export type CanvasComponentType =
   | "bar-chart"
   | "json-viewer"
   | "key-value"
-  | "progress-dashboard";
+  | "progress-dashboard"
+  | "custom";
 
 export interface CanvasComponent {
   id: string;

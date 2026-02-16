@@ -541,6 +541,56 @@ async function main() {
         return;
       }
 
+      // ════════════════════════════════════════════════════════════════
+      // GET /api/events — SSE stream of tool approval requests
+      // ════════════════════════════════════════════════════════════════
+      //
+      // Streams real-time events to the frontend as Server-Sent Events.
+      // Currently emits "tool_approval_request" events when Claude CLI
+      // asks to use a tool (Bash, Read, Write, etc.) and needs approval.
+      //
+      // The frontend subscribes to this stream and shows an approve/deny
+      // UI, then calls POST /api/sessions/:id/tool-approval.
+      if (pathname === "/api/events" && req.method === "GET") {
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          "Access-Control-Allow-Origin": "*",
+        });
+
+        // Keep-alive heartbeat
+        const heartbeat = setInterval(() => {
+          res.write(":heartbeat\n\n");
+        }, 15000);
+
+        // Listen for Claude CLI messages and forward tool approval requests
+        const messageHandler = (sessionId: string, message: any) => {
+          if (
+            message.type === "control_request" &&
+            message.request?.subtype === "can_use_tool"
+          ) {
+            const event = {
+              sessionId,
+              requestId: message.request.request_id ?? message.request_id,
+              toolName: message.request.tool_name,
+              toolInput: message.request.input,
+              toolUseId: message.request.tool_use_id,
+              description: message.request.description,
+            };
+            res.write(`event: tool_approval_request\ndata: ${JSON.stringify(event)}\n\n`);
+          }
+        };
+
+        bridge.on("session:message", messageHandler);
+
+        req.on("close", () => {
+          clearInterval(heartbeat);
+          bridge.off("session:message", messageHandler);
+        });
+        return;
+      }
+
       // ── 404 ─────────────────────────────────────────────────────────
       res.writeHead(404, { "Content-Type": "text/plain" });
       res.end("Not Found");

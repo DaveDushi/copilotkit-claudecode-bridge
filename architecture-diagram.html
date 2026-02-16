@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CopilotKit ↔ Claude Code Bridge Architecture</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #e6edf3; padding: 40px; }
+  h1 { text-align: center; margin-bottom: 10px; font-size: 28px; color: #58a6ff; }
+  h2 { color: #58a6ff; margin: 30px 0 15px; font-size: 20px; border-bottom: 1px solid #30363d; padding-bottom: 8px; }
+  h3 { color: #79c0ff; margin: 20px 0 10px; font-size: 16px; }
+  .subtitle { text-align: center; color: #8b949e; margin-bottom: 40px; }
+
+  svg { display: block; margin: 0 auto; }
+
+  .diagram-container {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 30px;
+    margin: 20px 0;
+    overflow-x: auto;
+  }
+
+  .flow-section {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 24px;
+    margin: 20px 0;
+  }
+
+  .flow-step {
+    display: flex;
+    align-items: flex-start;
+    margin: 12px 0;
+    padding: 10px 16px;
+    background: #0d1117;
+    border-radius: 8px;
+    border-left: 3px solid #30363d;
+  }
+  .flow-step.frontend { border-left-color: #3fb950; }
+  .flow-step.bridge { border-left-color: #f0883e; }
+  .flow-step.claude { border-left-color: #a371f7; }
+
+  .step-num {
+    min-width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 13px;
+    margin-right: 14px;
+    flex-shrink: 0;
+  }
+  .frontend .step-num { background: #238636; }
+  .bridge .step-num { background: #9e6a03; }
+  .claude .step-num { background: #8957e5; }
+
+  .step-content { flex: 1; }
+  .step-label { font-weight: 600; color: #e6edf3; }
+  .step-detail { color: #8b949e; font-size: 13px; margin-top: 3px; }
+
+  code {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 12px;
+    color: #79c0ff;
+  }
+
+  .legend {
+    display: flex;
+    gap: 24px;
+    justify-content: center;
+    margin: 20px 0;
+    flex-wrap: wrap;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+  }
+  .legend-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+  }
+</style>
+</head>
+<body>
+
+<h1>CopilotKit ↔ Claude Code Bridge Architecture</h1>
+<p class="subtitle">Protocol translation layer: AG-UI (SSE) ↔ NDJSON (WebSocket)</p>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#3fb950"></div> CopilotKit Frontend (Browser)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f0883e"></div> Bridge Server (Node.js)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#a371f7"></div> Claude Code CLI (Subprocess)</div>
+</div>
+
+<!-- MAIN ARCHITECTURE DIAGRAM -->
+<div class="diagram-container">
+<svg viewBox="0 0 1100 820" width="1100" height="820">
+  <defs>
+    <marker id="arrow-green" viewBox="0 0 10 7" refX="9" refY="3.5" markerWidth="8" markerHeight="6" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#3fb950"/>
+    </marker>
+    <marker id="arrow-orange" viewBox="0 0 10 7" refX="9" refY="3.5" markerWidth="8" markerHeight="6" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#f0883e"/>
+    </marker>
+    <marker id="arrow-purple" viewBox="0 0 10 7" refX="9" refY="3.5" markerWidth="8" markerHeight="6" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#a371f7"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 7" refX="9" refY="3.5" markerWidth="8" markerHeight="6" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#58a6ff"/>
+    </marker>
+    <marker id="arrow-gray" viewBox="0 0 10 7" refX="9" refY="3.5" markerWidth="8" markerHeight="6" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <!-- ============ FRONTEND BOX ============ -->
+  <rect x="30" y="20" width="320" height="280" rx="12" fill="#0d1117" stroke="#3fb950" stroke-width="2"/>
+  <text x="190" y="50" text-anchor="middle" fill="#3fb950" font-weight="bold" font-size="16">CopilotKit Frontend</text>
+  <text x="190" y="70" text-anchor="middle" fill="#8b949e" font-size="12">(Browser - React)</text>
+
+  <!-- Frontend internals -->
+  <rect x="55" y="90" width="270" height="40" rx="6" fill="#161b22" stroke="#30363d"/>
+  <text x="190" y="115" text-anchor="middle" fill="#e6edf3" font-size="13">CopilotChat UI</text>
+
+  <rect x="55" y="145" width="270" height="40" rx="6" fill="#161b22" stroke="#30363d"/>
+  <text x="190" y="170" text-anchor="middle" fill="#e6edf3" font-size="13">useCopilotAction() hooks (Frontend Tools)</text>
+
+  <rect x="55" y="200" width="270" height="40" rx="6" fill="#161b22" stroke="#30363d"/>
+  <text x="190" y="225" text-anchor="middle" fill="#e6edf3" font-size="13">useClaudeBridge() → HttpAgent</text>
+
+  <rect x="55" y="255" width="130" height="30" rx="6" fill="#161b22" stroke="#30363d"/>
+  <text x="120" y="275" text-anchor="middle" fill="#8b949e" font-size="11">Context / State</text>
+  <rect x="195" y="255" width="130" height="30" rx="6" fill="#161b22" stroke="#30363d"/>
+  <text x="260" y="275" text-anchor="middle" fill="#8b949e" font-size="11">Tool Definitions</text>
+
+  <!-- ============ BRIDGE BOX ============ -->
+  <rect x="30" y="370" width="1040" height="260" rx="12" fill="#0d1117" stroke="#f0883e" stroke-width="2"/>
+  <text x="550" y="400" text-anchor="middle" fill="#f0883e" font-weight="bold" font-size="16">CopilotKitClaudeBridge (Node.js)</text>
+
+  <!-- AG-UI Server -->
+  <rect x="55" y="420" width="300" height="190" rx="8" fill="#161b22" stroke="#30363d"/>
+  <text x="205" y="445" text-anchor="middle" fill="#79c0ff" font-weight="bold" font-size="13">HTTP/SSE Server (AG-UI)</text>
+  <text x="205" y="462" text-anchor="middle" fill="#8b949e" font-size="11">agui-server.ts — port 3000</text>
+  <text x="70" y="488" fill="#e6edf3" font-size="11">GET  /info</text>
+  <text x="220" y="488" fill="#8b949e" font-size="10">→ agent discovery</text>
+  <text x="70" y="508" fill="#e6edf3" font-size="11">POST /agent/{id}/connect</text>
+  <text x="250" y="508" fill="#8b949e" font-size="10">→ handshake</text>
+  <text x="70" y="528" fill="#e6edf3" font-size="11">POST /agent/{id}/run</text>
+  <text x="240" y="528" fill="#8b949e" font-size="10">→ msg + SSE stream</text>
+
+  <rect x="70" y="545" width="270" height="50" rx="6" fill="#0d1117" stroke="#30363d"/>
+  <text x="205" y="565" text-anchor="middle" fill="#79c0ff" font-size="11">Protocol Translation (bridge.ts)</text>
+  <text x="205" y="580" text-anchor="middle" fill="#8b949e" font-size="10">NDJSON messages → AG-UI events</text>
+
+  <!-- State / Sessions -->
+  <rect x="385" y="420" width="260" height="190" rx="8" fill="#161b22" stroke="#30363d"/>
+  <text x="515" y="445" text-anchor="middle" fill="#79c0ff" font-weight="bold" font-size="13">AppState + Sessions</text>
+  <text x="515" y="462" text-anchor="middle" fill="#8b949e" font-size="11">state.ts / session.ts</text>
+
+  <text x="400" y="488" fill="#e6edf3" font-size="11">Event Bus (EventEmitter)</text>
+  <text x="400" y="508" fill="#e6edf3" font-size="11">Session Registry</text>
+  <text x="400" y="528" fill="#e6edf3" font-size="11">Message History</text>
+  <text x="400" y="548" fill="#e6edf3" font-size="11">Pending Control Requests</text>
+  <text x="400" y="568" fill="#e6edf3" font-size="11">Capabilities Cache</text>
+  <text x="400" y="588" fill="#e6edf3" font-size="11">Active Session Tracking</text>
+
+  <!-- WS Server -->
+  <rect x="675" y="420" width="370" height="190" rx="8" fill="#161b22" stroke="#30363d"/>
+  <text x="860" y="445" text-anchor="middle" fill="#79c0ff" font-weight="bold" font-size="13">WebSocket Server (NDJSON)</text>
+  <text x="860" y="462" text-anchor="middle" fill="#8b949e" font-size="11">ws-server.ts — port 3001</text>
+
+  <text x="690" y="488" fill="#e6edf3" font-size="11">ws://127.0.0.1:3001/ws/cli/{sessionId}</text>
+
+  <text x="690" y="516" fill="#3fb950" font-size="11">→ Bridge sends:</text>
+  <text x="690" y="534" fill="#8b949e" font-size="10">  "user" messages, "control_response"</text>
+
+  <text x="690" y="558" fill="#a371f7" font-size="11">← Claude sends:</text>
+  <text x="690" y="576" fill="#8b949e" font-size="10">  "stream_event", "assistant", "result",</text>
+  <text x="690" y="592" fill="#8b949e" font-size="10">  "control_request", "system", "keep_alive"</text>
+
+  <!-- ============ CLAUDE CODE BOX ============ -->
+  <rect x="680" y="700" width="390" height="100" rx="12" fill="#0d1117" stroke="#a371f7" stroke-width="2"/>
+  <text x="875" y="730" text-anchor="middle" fill="#a371f7" font-weight="bold" font-size="16">Claude Code CLI</text>
+  <text x="875" y="750" text-anchor="middle" fill="#8b949e" font-size="12">(Subprocess via process.ts)</text>
+  <text x="875" y="772" text-anchor="middle" fill="#8b949e" font-size="11">claude --sdk-url ws://127.0.0.1:3001</text>
+  <text x="875" y="790" text-anchor="middle" fill="#e6edf3" font-size="11">Bash, Read, Write, Edit, Glob, Grep, MCP, Task...</text>
+
+  <!-- ============ ARROWS ============ -->
+
+  <!-- Frontend → Bridge (HTTP POST) -->
+  <line x1="190" y1="300" x2="190" y2="368" stroke="#3fb950" stroke-width="2" marker-end="url(#arrow-green)"/>
+  <text x="200" y="340" fill="#3fb950" font-size="11" font-weight="bold">HTTP POST</text>
+  <text x="200" y="355" fill="#8b949e" font-size="10">user msg + tools + context</text>
+
+  <!-- Bridge → Frontend (SSE) -->
+  <line x1="160" y1="368" x2="160" y2="300" stroke="#f0883e" stroke-width="2" marker-end="url(#arrow-orange)" stroke-dasharray="6,3"/>
+  <text x="60" y="340" fill="#f0883e" font-size="11" font-weight="bold">SSE Stream</text>
+  <text x="60" y="355" fill="#8b949e" font-size="10">AG-UI events</text>
+
+  <!-- AG-UI ↔ State -->
+  <line x1="355" y1="515" x2="383" y2="515" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+  <line x1="383" y1="530" x2="355" y2="530" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+
+  <!-- State ↔ WS -->
+  <line x1="645" y1="515" x2="673" y2="515" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+  <line x1="673" y1="530" x2="645" y2="530" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+
+  <!-- Bridge WS → Claude -->
+  <line x1="875" y1="612" x2="875" y2="698" stroke="#a371f7" stroke-width="2.5" marker-end="url(#arrow-purple)"/>
+  <text x="885" y="650" fill="#a371f7" font-size="11" font-weight="bold">WebSocket</text>
+  <text x="885" y="665" fill="#8b949e" font-size="10">NDJSON bidirectional</text>
+
+  <!-- Claude → Bridge WS -->
+  <line x1="845" y1="698" x2="845" y2="612" stroke="#a371f7" stroke-width="2.5" marker-end="url(#arrow-purple)" stroke-dasharray="6,3"/>
+
+  <!-- Tool results arrow (Frontend → Bridge, loopback) -->
+  <rect x="370" y="20" width="370" height="110" rx="8" fill="#161b22" stroke="#30363d" stroke-dasharray="5,3"/>
+  <text x="555" y="45" text-anchor="middle" fill="#f0883e" font-weight="bold" font-size="13">Frontend Tool Execution Loop</text>
+  <text x="555" y="68" text-anchor="middle" fill="#8b949e" font-size="11">1. Claude emits tool_use → bridge sends TOOL_CALL events</text>
+  <text x="555" y="85" text-anchor="middle" fill="#8b949e" font-size="11">2. CopilotKit runs useCopilotAction() handler locally</text>
+  <text x="555" y="102" text-anchor="middle" fill="#8b949e" font-size="11">3. Frontend POSTs tool_result back → bridge sends to Claude</text>
+  <text x="555" y="119" text-anchor="middle" fill="#8b949e" font-size="11">4. Claude continues with result → streams more response</text>
+
+  <path d="M 350 165 Q 440 140 440 75 Q 440 40 370 40" stroke="#3fb950" stroke-width="1.5" fill="none" marker-end="url(#arrow-green)" stroke-dasharray="4,3"/>
+  <path d="M 370 120 Q 440 120 440 200 Q 440 260 350 260" stroke="#f0883e" stroke-width="1.5" fill="none" marker-end="url(#arrow-orange)" stroke-dasharray="4,3"/>
+
+  <!-- Tool Approval box -->
+  <rect x="770" y="20" width="300" height="110" rx="8" fill="#161b22" stroke="#30363d" stroke-dasharray="5,3"/>
+  <text x="920" y="45" text-anchor="middle" fill="#a371f7" font-weight="bold" font-size="13">Claude Code Tool Approval</text>
+  <text x="920" y="68" text-anchor="middle" fill="#8b949e" font-size="11">1. Claude wants to run Bash/Write/Edit...</text>
+  <text x="920" y="85" text-anchor="middle" fill="#8b949e" font-size="11">2. Sends control_request (can_use_tool)</text>
+  <text x="920" y="102" text-anchor="middle" fill="#8b949e" font-size="11">3. Bridge emits CUSTOM event to frontend</text>
+  <text x="920" y="119" text-anchor="middle" fill="#8b949e" font-size="11">4. Frontend approves → bridge sends response</text>
+</svg>
+</div>
+
+<!-- DETAILED MESSAGE FLOW: User sends a message -->
+<h2>Flow 1: User Sends a Message</h2>
+<div class="flow-section">
+  <div class="flow-step frontend">
+    <div class="step-num">1</div>
+    <div class="step-content">
+      <div class="step-label">User types in CopilotChat</div>
+      <div class="step-detail">CopilotKit collects message + context (workspace state) + tool definitions (useCopilotAction hooks)</div>
+    </div>
+  </div>
+  <div class="flow-step frontend">
+    <div class="step-num">2</div>
+    <div class="step-content">
+      <div class="step-label">HTTP POST to <code>/agent/{id}/run</code></div>
+      <div class="step-detail">Body: <code>{ messages: [...], tools: [...], context: [...] }</code> — opens SSE stream for response</div>
+    </div>
+  </div>
+  <div class="flow-step bridge">
+    <div class="step-num">3</div>
+    <div class="step-content">
+      <div class="step-label">agui-server.ts receives request</div>
+      <div class="step-detail"><code>handleRunFromInput()</code> extracts user message, builds context + tool markdown, combines into single message</div>
+    </div>
+  </div>
+  <div class="flow-step bridge">
+    <div class="step-num">4</div>
+    <div class="step-content">
+      <div class="step-label">Bridge sends via WebSocket</div>
+      <div class="step-detail">ServerMessage <code>{ type: "user", message: { role: "user", content: "..." }, session_id }</code> — NDJSON</div>
+    </div>
+  </div>
+  <div class="flow-step claude">
+    <div class="step-num">5</div>
+    <div class="step-content">
+      <div class="step-label">Claude Code CLI receives message</div>
+      <div class="step-detail">Processes with Claude API, begins streaming response tokens</div>
+    </div>
+  </div>
+  <div class="flow-step claude">
+    <div class="step-num">6</div>
+    <div class="step-content">
+      <div class="step-label">Claude streams NDJSON back</div>
+      <div class="step-detail"><code>stream_event</code> (content_block_start/delta/stop), then <code>assistant</code> (final), then <code>result</code> (done)</div>
+    </div>
+  </div>
+  <div class="flow-step bridge">
+    <div class="step-num">7</div>
+    <div class="step-content">
+      <div class="step-label">ws-server.ts broadcasts to event bus</div>
+      <div class="step-detail"><code>state.emitWsEvent()</code> — stores assistant messages in session.messageHistory</div>
+    </div>
+  </div>
+  <div class="flow-step bridge">
+    <div class="step-num">8</div>
+    <div class="step-content">
+      <div class="step-label">bridge.ts translates to AG-UI events</div>
+      <div class="step-detail"><code>translateClaudeMessage()</code>: stream_event → TEXT_MESSAGE_START/CONTENT/END, result → RUN_FINISHED</div>
+    </div>
+  </div>
+  <div class="flow-step frontend">
+    <div class="step-num">9</div>
+    <div class="step-content">
+      <div class="step-label">SSE events arrive at CopilotKit</div>
+      <div class="step-detail">CopilotChat renders streaming text incrementally in the chat UI</div>
+    </div>
+  </div>
+</div>
+
+<!-- FLOW 2: Frontend Tool Call -->
+<h2>Flow 2: Claude Calls a Frontend Tool (useCopilotAction)</h2>
+<div class="flow-section">
+  <div class="flow-step claude">
+    <div class="step-num">1</div>
+    <div class="step-content">
+      <div class="step-label">Claude decides to call a frontend tool</div>
+      <div class="step-detail">Emits <code>tool_use</code> block in response (tool name + JSON args) — tool defs were injected in system context</div>
+    </div>
+  </div>
+  <div class="flow-step bridge">
+    <div class="step-num">2</div>
+    <div class="step-content">
+      <div class="step-label">Bridge translates to AG-UI tool events</div>
+      <div class="step-detail"><code>TOOL_CALL_START</code> → <code>TOOL_CALL_ARGS</code> (streamed JSON) → <code>TOOL_CALL_END</code></div>
+    </div>
+  </div>
+  <div class="flow-step frontend">
+    <div class="step-num">3</div>
+    <div class="step-content">
+      <div class="step-label">CopilotKit executes the tool locally</div>
+      <div class="step-detail">Matches tool name → runs <code>useCopilotAction</code> handler in browser → gets result</div>
+    </div>
+  </div>
+  <div class="flow-step frontend">
+    <div class="step-num">4</div>
+    <div class="step-content">
+      <div class="step-label">Frontend POSTs tool result back</div>
+      <div class="step-detail"><code>POST /agent/{id}/run</code> with messages including <code>{ role: "tool", toolCallId, content: "result" }</code></div>
+    </div>
+  </div>
+  <div class="flow-step bridge">
+    <div class="step-num">5</div>
+    <div class="step-content">
+      <div class="step-label">Bridge extracts tool results</div>
+      <div class="step-detail"><code>extractToolResults()</code> converts to Claude's <code>tool_result</code> content block format, sends via WebSocket</div>
+    </div>
+  </div>
+  <div class="flow-step claude">
+    <div class="step-num">6</div>
+    <div class="step-content">
+      <div class="step-label">Claude continues with tool result</div>
+      <div class="step-detail">Processes the result and streams more response — may call more tools or finish</div>
+    </div>
+  </div>
+</div>
+
+<!-- FLOW 3: Claude Code Tool Approval -->
+<h2>Flow 3: Claude Code Native Tool Approval (Bash, Write, etc.)</h2>
+<div class="flow-section">
+  <div class="flow-step claude">
+    <div class="step-num">1</div>
+    <div class="step-content">
+      <div class="step-label">Claude wants to use a native tool</div>
+      <div class="step-detail">Sends <code>control_request { subtype: "can_use_tool", tool_name: "Bash", input: { command: "npm test" } }</code></div>
+    </div>
+  </div>
+  <div class="flow-step bridge">
+    <div class="step-num">2</div>
+    <div class="step-content">
+      <div class="step-label">Bridge stores pending request</div>
+      <div class="step-detail">Keyed by <code>request_id</code> — emits <code>CUSTOM</code> AG-UI event: <code>{ name: "tool_approval_request", value: {...} }</code></div>
+    </div>
+  </div>
+  <div class="flow-step frontend">
+    <div class="step-num">3</div>
+    <div class="step-content">
+      <div class="step-label">Frontend decides: approve or deny</div>
+      <div class="step-detail">Can auto-approve, auto-deny, or show UI — calls <code>bridge.approveToolSimple()</code> or <code>bridge.denyTool()</code></div>
+    </div>
+  </div>
+  <div class="flow-step bridge">
+    <div class="step-num">4</div>
+    <div class="step-content">
+      <div class="step-label">Bridge sends control_response</div>
+      <div class="step-detail">ServerMessage <code>{ type: "control_response", response: { approved: true/false, ... } }</code> via WebSocket</div>
+    </div>
+  </div>
+  <div class="flow-step claude">
+    <div class="step-num">5</div>
+    <div class="step-content">
+      <div class="step-label">Claude executes or skips tool</div>
+      <div class="step-detail">If approved: runs the tool, streams result. If denied: adjusts approach or asks user.</div>
+    </div>
+  </div>
+</div>
+
+<!-- PROTOCOL TRANSLATION TABLE -->
+<h2>Protocol Translation Map (bridge.ts)</h2>
+<div class="flow-section" style="overflow-x: auto;">
+  <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+    <thead>
+      <tr style="border-bottom: 2px solid #30363d;">
+        <th style="text-align: left; padding: 10px; color: #a371f7;">Claude NDJSON Message</th>
+        <th style="text-align: center; padding: 10px; color: #8b949e;">→</th>
+        <th style="text-align: left; padding: 10px; color: #3fb950;">AG-UI Event(s)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr style="border-bottom: 1px solid #21262d;">
+        <td style="padding: 8px;"><code>stream_event (content_block_start, type=text)</code></td>
+        <td style="text-align: center;">→</td>
+        <td style="padding: 8px;"><code>TEXT_MESSAGE_START</code></td>
+      </tr>
+      <tr style="border-bottom: 1px solid #21262d;">
+        <td style="padding: 8px;"><code>stream_event (content_block_delta, type=text)</code></td>
+        <td style="text-align: center;">→</td>
+        <td style="padding: 8px;"><code>TEXT_MESSAGE_CONTENT</code></td>
+      </tr>
+      <tr style="border-bottom: 1px solid #21262d;">
+        <td style="padding: 8px;"><code>stream_event (content_block_stop, type=text)</code></td>
+        <td style="text-align: center;">→</td>
+        <td style="padding: 8px;"><code>TEXT_MESSAGE_END</code></td>
+      </tr>
+      <tr style="border-bottom: 1px solid #21262d;">
+        <td style="padding: 8px;"><code>stream_event (content_block_start, type=tool_use)</code></td>
+        <td style="text-align: center;">→</td>
+        <td style="padding: 8px;"><code>TOOL_CALL_START</code></td>
+      </tr>
+      <tr style="border-bottom: 1px solid #21262d;">
+        <td style="padding: 8px;"><code>stream_event (content_block_delta, type=tool_use)</code></td>
+        <td style="text-align: center;">→</td>
+        <td style="padding: 8px;"><code>TOOL_CALL_ARGS</code></td>
+      </tr>
+      <tr style="border-bottom: 1px solid #21262d;">
+        <td style="padding: 8px;"><code>stream_event (content_block_stop, type=tool_use)</code></td>
+        <td style="text-align: center;">→</td>
+        <td style="padding: 8px;"><code>TOOL_CALL_END</code></td>
+      </tr>
+      <tr style="border-bottom: 1px solid #21262d;">
+        <td style="padding: 8px;"><code>assistant (final complete message)</code></td>
+        <td style="text-align: center;">→</td>
+        <td style="padding: 8px;">Emits only blocks not yet streamed (dedup)</td>
+      </tr>
+      <tr style="border-bottom: 1px solid #21262d;">
+        <td style="padding: 8px;"><code>result (turn complete + stats)</code></td>
+        <td style="text-align: center;">→</td>
+        <td style="padding: 8px;"><code>RUN_FINISHED</code> + <code>CUSTOM</code> (stats)</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px;"><code>control_request (can_use_tool)</code></td>
+        <td style="text-align: center;">→</td>
+        <td style="padding: 8px;"><code>CUSTOM</code> (tool_approval_request)</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- KEY FILES -->
+<h2>Key Files</h2>
+<div class="flow-section" style="overflow-x: auto;">
+  <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+    <thead>
+      <tr style="border-bottom: 2px solid #30363d;">
+        <th style="text-align: left; padding: 10px; color: #58a6ff;">File</th>
+        <th style="text-align: left; padding: 10px; color: #8b949e;">Role</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr style="border-bottom: 1px solid #21262d;">
+        <td style="padding: 8px;"><code>CopilotKitClaudeBridge.ts</code></td>
+        <td style="padding: 8px;">Main facade — session CRUD, control requests, tool approval API</td>
+      </tr>
+      <tr style="border-bottom: 1px solid #21262d;">
+        <td style="padding: 8px;"><code>server/agui-server.ts</code></td>
+        <td style="padding: 8px;">HTTP/SSE server — receives AG-UI requests, triggers WS sends, streams AG-UI events back</td>
+      </tr>
+      <tr style="border-bottom: 1px solid #21262d;">
+        <td style="padding: 8px;"><code>server/ws-server.ts</code></td>
+        <td style="padding: 8px;">WebSocket server — receives NDJSON from Claude CLI, broadcasts to event bus</td>
+      </tr>
+      <tr style="border-bottom: 1px solid #21262d;">
+        <td style="padding: 8px;"><code>server/bridge.ts</code></td>
+        <td style="padding: 8px;">Protocol translator — converts Claude NDJSON messages to AG-UI events</td>
+      </tr>
+      <tr style="border-bottom: 1px solid #21262d;">
+        <td style="padding: 8px;"><code>server/state.ts</code></td>
+        <td style="padding: 8px;">Global state — EventEmitter bus, session registry, active session tracking</td>
+      </tr>
+      <tr style="border-bottom: 1px solid #21262d;">
+        <td style="padding: 8px;"><code>server/session.ts</code></td>
+        <td style="padding: 8px;">Session definition — status, message history, capabilities, pending requests</td>
+      </tr>
+      <tr style="border-bottom: 1px solid #21262d;">
+        <td style="padding: 8px;"><code>server/process.ts</code></td>
+        <td style="padding: 8px;">Spawns <code>claude --sdk-url ws://...</code> subprocess, monitors exit</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px;"><code>react/useClaudeBridge.ts</code></td>
+        <td style="padding: 8px;">React hook — creates HttpAgent pointing at bridge for CopilotKit integration</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+</body>
+</html>

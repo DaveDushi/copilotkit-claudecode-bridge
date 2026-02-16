@@ -1,25 +1,15 @@
-/** A task on the workspace task board. */
-export interface Task {
+export type CanvasComponentType =
+  | "data-table"
+  | "line-chart"
+  | "bar-chart"
+  | "json-viewer"
+  | "key-value"
+  | "progress-dashboard";
+
+export interface CanvasComponent {
   id: string;
+  type: CanvasComponentType;
   title: string;
-  details?: string;
-  done: boolean;
-}
-
-/** A file entry in the workspace file explorer. */
-export interface FileEntry {
-  path: string;
-  name: string;
-  type: string; // file, directory, image, pdf, code, text
-  size: string;
-  preview?: string;
-}
-
-/** An event in the activity feed. */
-export interface ActivityEvent {
-  id: string;
+  data: Record<string, unknown>;
   timestamp: number;
-  type: "tool" | "file" | "system" | "cost";
-  title: string;
-  detail?: string;
 }

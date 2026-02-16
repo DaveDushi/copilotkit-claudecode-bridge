@@ -14,7 +14,8 @@
     "@copilotkit/react-ui": "^1.51.0",
     "copilotkit-claude-bridge": "file:..",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "recharts": "^2.15.0"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",

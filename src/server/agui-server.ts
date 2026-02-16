@@ -233,7 +233,10 @@ function handleSingleTransport(
       // Single transport connect — replay message history if available
       handleConnectFromInput(res, state, innerBody as Partial<RunAgentInput>, agentId);
     } else if (method === "agent/stop") {
-      // Stop request — acknowledge and return
+      // Stop request — interrupt the active Claude CLI session so it aborts
+      // the current turn. This unblocks the SSE response from handleRunFromInput
+      // because Claude CLI will send a `result` message which triggers RUN_FINISHED.
+      handleStop(state);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ ok: true }));
     } else if (method === "agent/run" || method === "") {
@@ -343,28 +346,78 @@ function handleRunFromInput(
     // 1. Emit RunStarted
     sendEvent({ type: "RUN_STARTED", threadId, runId });
 
-    // 2. Extract last user message from CopilotKit input
+    // 2. Check for frontend tool results (role: "tool" messages).
+    //    When CopilotKit's useCopilotAction handler returns a value,
+    //    CopilotKit re-invokes agent/run with the result as a role:"tool"
+    //    message. We forward these to Claude CLI as tool_result blocks
+    //    so Claude knows the frontend action succeeded.
+    const toolResults = extractToolResults(input);
+    if (toolResults.length > 0) {
+      console.log(`[bridge] Forwarding ${toolResults.length} frontend tool result(s) to Claude CLI`);
+      startToolResultBridge(state, res, sendEvent, threadId, runId, toolResults);
+      return;
+    }
+
+    // 3. Extract last user message from CopilotKit input
     const userMessage = extractUserMessage(input);
 
     if (!userMessage) {
-      // No user message — this may be a connect-style call or empty input.
-      // Complete gracefully instead of erroring.
+      // No user message and no tool results — connect-style call or empty input.
       sendEvent({ type: "RUN_FINISHED", threadId, runId });
       res.end();
       return;
     }
 
-    // 3a. Build readable context from CopilotKit's context array
+    // 4a. Build readable context from CopilotKit's context array
     const readableContext = buildReadableContext(input.context);
 
-    // 3b. Build tool context from CopilotKit's tools array
+    // 4b. Build tool context from CopilotKit's tools array
     const toolsContext = buildToolsContext(input.tools);
 
-    // 4. Combine contexts + user message
+    // 5. Combine contexts + user message
     const fullMessage = `${readableContext}${toolsContext}${userMessage}`;
 
-    // 5. Find the active session and send the message
+    // 6. Find the active session and send the message
     startBridgeLoop(state, res, sendEvent, threadId, runId, fullMessage, userMessage);
+}
+
+/**
+ * Interrupt the active Claude CLI session.
+ *
+ * Sends an `interrupt` control request via WebSocket. Claude CLI will
+ * abort the current turn and send a `result` message, which the bridge's
+ * event handler translates into RUN_FINISHED — closing the SSE response
+ * and unblocking CopilotKit's UI.
+ */
+function handleStop(state: AppState): void {
+  const session = state.activeSessionId
+    ? state.sessions.get(state.activeSessionId)
+    : null;
+
+  if (!session?.wsSend) {
+    // Try any session with an open WebSocket
+    for (const [, s] of state.sessions) {
+      if (s.wsSend) {
+        sendInterrupt(s);
+        return;
+      }
+    }
+    console.log("[bridge] agent/stop: no session to interrupt");
+    return;
+  }
+
+  sendInterrupt(session);
+}
+
+function sendInterrupt(session: Session): void {
+  const requestId = uuidv4();
+  const msg = JSON.stringify({
+    type: "control_request",
+    request_id: requestId,
+    request: { subtype: "interrupt" },
+  });
+  session.wsSend!(`${msg}\n`);
+  console.log(`[bridge] Sent interrupt to session ${session.id.slice(0, 8)}`);
 }
 
 function extractUserMessage(input: RunAgentInput): string | null {
@@ -377,6 +430,153 @@ function extractUserMessage(input: RunAgentInput): string | null {
     }
   }
   return null;
+}
+
+/**
+ * Extract frontend tool results from CopilotKit's message array.
+ *
+ * When a useCopilotAction handler returns a value, CopilotKit adds a
+ * role:"tool" message and re-invokes agent/run. We detect these and
+ * forward them to Claude CLI so it knows the action succeeded.
+ */
+function extractToolResults(input: RunAgentInput): Array<{ toolCallId: string; content: string }> {
+  if (!input.messages) return [];
+
+  const results: Array<{ toolCallId: string; content: string }> = [];
+
+  // Look at messages from the end — tool results come after the assistant's tool calls.
+  // We only want NEW tool results (ones not yet forwarded to Claude).
+  // CopilotKit sends the full history, so we look for tool messages that appear
+  // after the last assistant message.
+  let foundAssistant = false;
+  for (let i = input.messages.length - 1; i >= 0; i--) {
+    const msg = input.messages[i];
+
+    if (msg.role === "tool") {
+      const toolCallId = (msg.toolCallId ?? msg.tool_call_id ?? "") as string;
+      if (toolCallId) {
+        const content = typeof msg.content === "string"
+          ? msg.content
+          : JSON.stringify(msg.content ?? "");
+        results.push({ toolCallId, content });
+      }
+    } else if (msg.role === "assistant") {
+      // Stop once we hit the assistant message that triggered these tool calls
+      foundAssistant = true;
+      break;
+    } else if (msg.role === "user") {
+      // If we hit a user message before an assistant, these aren't new tool results
+      break;
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Forward frontend tool results to Claude CLI and bridge the response.
+ *
+ * This handles the case where CopilotKit re-invokes agent/run to deliver
+ * the results of useCopilotAction handlers. We send them to Claude as
+ * tool_result content blocks in a user message, then stream Claude's
+ * response back through the normal bridge translation.
+ */
+function startToolResultBridge(
+  state: AppState,
+  res: ServerResponse,
+  sendEvent: (event: AguiEvent) => void,
+  threadId: string,
+  runId: string,
+  toolResults: Array<{ toolCallId: string; content: string }>,
+): void {
+  const session = state.activeSessionId
+    ? state.sessions.get(state.activeSessionId)
+    : null;
+
+  if (!session?.wsSend) {
+    // No active session — try to find any session with a connection
+    for (const [, s] of state.sessions) {
+      if (s.wsSend) {
+        sendToolResults(s, toolResults);
+        bridgeResponse(state, s, res, sendEvent, threadId, runId);
+        return;
+      }
+    }
+    // No session at all — finish gracefully
+    console.log("[bridge] No session available for tool results, finishing run");
+    sendEvent({ type: "RUN_FINISHED", threadId, runId });
+    res.end();
+    return;
+  }
+
+  sendToolResults(session, toolResults);
+  bridgeResponse(state, session, res, sendEvent, threadId, runId);
+}
+
+/**
+ * Send tool_result content blocks to Claude CLI via WebSocket.
+ * Claude expects these as a user message with content: ToolResultBlock[].
+ */
+function sendToolResults(
+  session: Session,
+  toolResults: Array<{ toolCallId: string; content: string }>,
+): void {
+  const resultBlocks = toolResults.map((r) => ({
+    type: "tool_result" as const,
+    tool_use_id: r.toolCallId,
+    content: r.content,
+  }));
+
+  const msg = JSON.stringify({
+    type: "user",
+    message: { role: "user", content: resultBlocks },
+    parent_tool_use_id: null,
+    session_id: session.cliSessionId ?? "",
+  });
+
+  session.wsSend!(`${msg}\n`);
+}
+
+/**
+ * Subscribe to Claude's response events and stream them as AG-UI SSE.
+ * Used by both the normal user message path and the tool result path.
+ */
+function bridgeResponse(
+  state: AppState,
+  session: Session,
+  res: ServerResponse,
+  sendEvent: (event: AguiEvent) => void,
+  threadId: string,
+  runId: string,
+): void {
+  const bridge = new BridgeState();
+  const handler = (wsEvent: WsEvent) => {
+    const aguiEvents = translateClaudeMessage(
+      wsEvent.message,
+      threadId,
+      runId,
+      bridge,
+    );
+
+    let isFinished = false;
+    for (const event of aguiEvents) {
+      if (event.type === "RUN_FINISHED") {
+        isFinished = true;
+      }
+      sendEvent(event);
+    }
+
+    if (isFinished || wsEvent.message.type === "result") {
+      state.offWsEvent(handler);
+      res.end();
+    }
+  };
+
+  state.onWsEvent(handler);
+
+  res.on("close", () => {
+    state.offWsEvent(handler);
+  });
 }
 
 function buildReadableContext(context?: Array<Record<string, unknown>>): string {

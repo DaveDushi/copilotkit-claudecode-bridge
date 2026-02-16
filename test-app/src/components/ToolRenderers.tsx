@@ -148,6 +148,21 @@ export function ToolRenderers() {
     ),
   });
 
+  // ── spawnCanvas — dynamic visualization ────────────────────────────
+  useRenderToolCall({
+    name: "spawnCanvas",
+    description: "Canvas visualization",
+    parameters: [
+      { name: "type", type: "string" as const },
+      { name: "title", type: "string" as const },
+    ],
+    render: ({ status, args }: any) => (
+      <ToolCard icon="&#9671;" title={status === "complete" ? `Canvas: ${args?.title ?? ""}` : "Creating visualization..."} bg="#f3e5f5">
+        {args?.type && <div style={{ fontSize: 11, color: "#888" }}>{args.type}</div>}
+      </ToolCard>
+    ),
+  });
+
   // ── Default catch-all for any other tool ─────────────────────────
   useDefaultTool({
     render: ({ name, status, args }: any) => (

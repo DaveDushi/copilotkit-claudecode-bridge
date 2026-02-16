@@ -96,6 +96,20 @@ async function main() {
         return;
       }
 
+      // POST /api/sessions/:id/permission-mode — change permission mode
+      const modeMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/permission-mode$/);
+      if (modeMatch && req.method === "POST") {
+        const sessionId = modeMatch[1];
+        const body = JSON.parse(await readBody(req));
+        const mode = body.mode;
+        if (!mode) { res.writeHead(400); res.end('{"error":"mode required"}'); return; }
+
+        const result = await bridge.setPermissionMode(sessionId, mode);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, mode: (result as any).mode ?? mode }));
+        return;
+      }
+
       // POST /api/sessions/:id/tool-approval — approve or deny
       const match = pathname.match(/^\/api\/sessions\/([^/]+)\/tool-approval$/);
       if (match && req.method === "POST") {

@@ -1,3 +1,5 @@
+import { useRef, useCallback } from "react";
+import html2canvas from "html2canvas";
 import type { CanvasComponent } from "../types";
 import { CANVAS_REGISTRY } from "./dynamic/registry";
 
@@ -7,7 +9,79 @@ interface Props {
   onClear: () => void;
 }
 
+function slugify(s: string) {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "visualization";
+}
+
+/** Download a Blob as a file. */
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+}
+
 export function DynamicCanvas({ components, onRemove, onClear }: Props) {
+  const compRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  /** Save a component's rendered body as PNG. */
+  const saveAsPng = useCallback(async (comp: CanvasComponent) => {
+    const el = compRefs.current[comp.id];
+    if (!el) return;
+
+    // For custom HTML, capture the iframe content by grabbing it from srcdoc
+    if (comp.type === "custom") {
+      const iframe = el.querySelector("iframe") as HTMLIFrameElement | null;
+      if (iframe?.contentDocument?.body) {
+        try {
+          const canvas = await html2canvas(iframe.contentDocument.body, {
+            backgroundColor: "#ffffff",
+            scale: 2,
+          });
+          canvas.toBlob((blob) => {
+            if (blob) downloadBlob(blob, `${slugify(comp.title)}.png`);
+          });
+          return;
+        } catch {
+          // Fall through to parent capture
+        }
+      }
+    }
+
+    try {
+      const canvas = await html2canvas(el, { backgroundColor: "#ffffff", scale: 2 });
+      canvas.toBlob((blob) => {
+        if (blob) downloadBlob(blob, `${slugify(comp.title)}.png`);
+      });
+    } catch (err) {
+      console.error("Failed to save PNG:", err);
+    }
+  }, []);
+
+  /** Save custom HTML as a standalone .html file. */
+  const saveAsHtml = useCallback((comp: CanvasComponent) => {
+    const html = (comp.data as any)?.html ?? "";
+    const doc = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${comp.title}</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; font-family: system-ui, -apple-system, sans-serif; font-size: 14px; line-height: 1.5; color: #333; background: #fff; }
+</style>
+</head>
+<body>
+${html}
+</body>
+</html>`;
+    const blob = new Blob([doc], { type: "text/html" });
+    downloadBlob(blob, `${slugify(comp.title)}.html`);
+  }, []);
   if (components.length === 0) {
     return (
       <div style={{
@@ -94,6 +168,39 @@ export function DynamicCanvas({ components, onRemove, onClear }: Props) {
               <span style={{ fontSize: 10, color: "#bbb" }}>
                 {new Date(comp.timestamp).toLocaleTimeString()}
               </span>
+              {/* Save buttons */}
+              <button
+                onClick={() => saveAsPng(comp)}
+                style={{
+                  background: "none",
+                  border: "1px solid #ddd",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  color: "#666",
+                  fontSize: 10,
+                  padding: "2px 6px",
+                }}
+                title="Save as PNG"
+              >
+                PNG
+              </button>
+              {comp.type === "custom" && (
+                <button
+                  onClick={() => saveAsHtml(comp)}
+                  style={{
+                    background: "none",
+                    border: "1px solid #ddd",
+                    borderRadius: 4,
+                    cursor: "pointer",
+                    color: "#666",
+                    fontSize: 10,
+                    padding: "2px 6px",
+                  }}
+                  title="Save as HTML"
+                >
+                  HTML
+                </button>
+              )}
               <button
                 onClick={() => onRemove(comp.id)}
                 style={{
@@ -112,7 +219,10 @@ export function DynamicCanvas({ components, onRemove, onClear }: Props) {
             </div>
 
             {/* Component body */}
-            <div style={{ padding: 12 }}>
+            <div
+              ref={(el) => { compRefs.current[comp.id] = el; }}
+              style={{ padding: 12 }}
+            >
               <Component data={comp.data} />
             </div>
           </div>

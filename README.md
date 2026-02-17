@@ -6,6 +6,12 @@ Claude Code is powerful — but the terminal isn't for everyone, and the opinion
 
 Tool approval dialogs, model switching, permission modes, MCP servers, multi-session management — it's all exposed. You decide how it looks and works.
 
+## Demo
+
+The included demo app (**File Analysis Studio**) shows what's possible — a three-panel workspace where Claude spawns interactive visualizations, manages files, and collaborates through inline UI components:
+
+https://github.com/DaveDushi/copilotkit-claudecode-bridge/releases/download/assets/CopilotKit-ClaudeCode-Bridge-Demo.mp4
+
 ## How It Works
 
 The bridge spawns Claude Code CLI in SDK mode, translates its streaming NDJSON protocol into [AG-UI](https://docs.ag-ui.com) events, and serves an HTTP endpoint that CopilotKit connects to.
@@ -236,9 +242,31 @@ On `agent/connect`, the bridge sends a `STATE_SNAPSHOT` with the full session st
 }
 ```
 
-## Demo App
+## Demo App — File Analysis Studio
 
-A full-featured demo is included in `test-app/` — a canvas workspace where Claude Code spawns interactive visualizations (charts, tables, JSON viewers, custom HTML) alongside the chat.
+A full-featured demo is included in `test-app/` — a three-panel workspace where Claude Code spawns interactive visualizations, manages files, and collaborates through rich inline UI.
+
+### Features
+
+**Workspace layout:**
+- Resizable three-panel design: file tree, dynamic canvas, and chat sidebar
+- File tree browser for navigating the workspace directory
+- Canvas with save/load/delete snapshots for persisting visualizations
+
+**10 visualization types** Claude can spawn on the canvas:
+- Data tables (read-only and editable)
+- Line, bar, and pie charts
+- JSON viewer, key-value grids, progress dashboards
+- Tabbed containers for grouped analysis
+- Custom HTML/CSS/JS in sandboxed iframes
+
+**5 interactive UI components** rendered inline in chat:
+- Confirmation dialogs, multi-choice selectors, input forms
+- Draft review/edit interfaces, multi-step progress trackers
+
+**Rich tool rendering** — Bash commands, file edits, writes, reads, glob/grep results, and todo lists all render as styled cards instead of raw JSON.
+
+**Export** — Save any canvas visualization as PNG or HTML.
 
 ### Running the demo
 
@@ -258,14 +286,6 @@ npx vite
 
 Open `http://localhost:5173`, enter a project folder path, and start chatting.
 
-### Demo features
-
-- Canvas with dynamic visualizations (charts, tables, JSON viewers, custom HTML/CSS)
-- Tool approval UI in the chat sidebar
-- Model and permission mode switching
-- Session management
-- Real-time capability badges and cost tracking
-
 ### Management API (port 3002)
 
 | Method | Endpoint | Description |
@@ -274,12 +294,14 @@ Open `http://localhost:5173`, enter a project folder path, and start chatting.
 | `POST` | `/api/sessions` | Create session (`{ "workingDir": "/path" }`) |
 | `PUT` | `/api/sessions/:id/activate` | Switch active session |
 | `PUT` | `/api/sessions/:id/model` | Change model |
-| `PUT` | `/api/sessions/:id/mode` | Change permission mode |
+| `POST` | `/api/sessions/:id/permission-mode` | Change permission mode |
 | `POST` | `/api/sessions/:id/interrupt` | Interrupt current operation |
 | `POST` | `/api/sessions/:id/initialize` | Send initialize |
 | `GET` | `/api/sessions/:id/capabilities` | Get capabilities |
 | `GET` | `/api/sessions/:id/mcp` | Get MCP status |
 | `DELETE` | `/api/sessions/:id` | Kill session |
+| `GET` | `/api/files` | List directory contents |
+| `GET` | `/api/events` | SSE stream for tool approval requests |
 
 ## Troubleshooting
 

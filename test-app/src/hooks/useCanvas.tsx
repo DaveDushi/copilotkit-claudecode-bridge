@@ -9,6 +9,7 @@
  * knows what's already displayed.
  */
 import React from "react";
+import { flushSync } from "react-dom";
 import { useCopilotReadable, useCopilotAction } from "@copilotkit/react-core";
 import { colors, radius, spacing, typography } from "../styles";
 import type { CanvasComponent, CanvasComponentType } from "../types";
@@ -88,8 +89,12 @@ export function useCanvas(
         parsedData._tableId = componentId;
       }
 
-      // Use a promise to capture the updated canvas state from the setter
-      const canvasSummary = await new Promise<string>((resolve) => {
+      // flushSync forces React to process the state update and re-render
+      // synchronously BEFORE this handler returns. This ensures
+      // useCopilotReadable picks up the new canvas state when CopilotKit
+      // collects context for the next agent/run request.
+      let canvasSummary = "";
+      flushSync(() => {
         setComponents((prev) => {
           const existing = prev.findIndex((c) => c.id === componentId);
           let next: CanvasComponent[];
@@ -105,9 +110,7 @@ export function useCanvas(
               timestamp: Date.now(),
             }];
           }
-          // Build summary of everything now on canvas so Claude knows full state
-          const summary = next.map((c) => `  - "${c.title}" (${c.type}, id=${c.id})`).join("\n");
-          resolve(summary);
+          canvasSummary = next.map((c) => `  - "${c.title}" (${c.type}, id=${c.id})`).join("\n");
           return next;
         });
       });
@@ -134,7 +137,9 @@ export function useCanvas(
     description: "Remove all visualizations from the user's canvas.",
     parameters: [],
     handler: async () => {
-      setComponents([]);
+      flushSync(() => {
+        setComponents([]);
+      });
       return "Canvas cleared. Canvas is now empty (0 items).";
     },
     render: ({ status }: any) => (

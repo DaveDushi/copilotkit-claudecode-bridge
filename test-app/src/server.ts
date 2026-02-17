@@ -4,11 +4,13 @@
  * Ports:
  *   3000  AG-UI  (CopilotKit connects here)
  *   3001  WS     (Claude CLI connects here)
- *   3002  Mgmt   (tool approval SSE + response)
+ *   3002  Mgmt   (tool approval SSE + response + file tree)
  *
  * User picks a workspace folder from the UI, then a session is spawned.
  */
 import { createServer } from "node:http";
+import { readdir } from "node:fs/promises";
+import { resolve, relative, join } from "node:path";
 import { CopilotKitClaudeBridge } from "copilotkit-claude-bridge";
 
 function readBody(req: import("node:http").IncomingMessage): Promise<string> {
@@ -18,6 +20,13 @@ function readBody(req: import("node:http").IncomingMessage): Promise<string> {
     req.on("end", () => resolve(body));
   });
 }
+
+// Patterns to hide from the file tree
+const HIDDEN = new Set([
+  ".git", "node_modules", ".env", ".env.local", ".DS_Store",
+  "Thumbs.db", ".vscode", ".idea", "__pycache__", ".cache",
+  "dist", "build", ".next", ".turbo",
+]);
 
 async function main() {
   const bridge = new CopilotKitClaudeBridge({ httpPort: 3000, wsPort: 3001 });
@@ -30,14 +39,15 @@ async function main() {
   console.log(`\n  AG-UI server:     http://localhost:${httpPort}`);
   console.log(`  WebSocket server: ws://localhost:${wsPort}`);
 
-  // ── Management API (tool approval only) ──────────────────────────
+  // ── Management API (tool approval + file tree) ─────────────────
   const mgmtServer = createServer(async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
     if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
-    const pathname = (req.url ?? "").split("?")[0];
+    const url = new URL(req.url ?? "", `http://${req.headers.host}`);
+    const pathname = url.pathname;
 
     try {
       // SSE stream — tool approval requests
@@ -127,6 +137,54 @@ async function main() {
         }
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end('{"ok":true}');
+        return;
+      }
+
+      // GET /api/files?path=<relative> — list directory contents for file tree
+      if (pathname === "/api/files" && req.method === "GET") {
+        const reqPath = url.searchParams.get("path") ?? ".";
+
+        // Find the session's working dir
+        const ids = bridge.getSessionIds();
+        if (ids.length === 0) {
+          res.writeHead(400);
+          res.end('{"error":"No active session"}');
+          return;
+        }
+        const info = bridge.getSessionInfo(ids[0]);
+        const workingDir = (info as any)?.workingDir ?? process.cwd();
+
+        // Resolve and verify the path stays within workingDir
+        const absPath = resolve(workingDir, reqPath);
+        const rel = relative(workingDir, absPath);
+        if (rel.startsWith("..")) {
+          res.writeHead(403);
+          res.end('{"error":"Path outside workspace"}');
+          return;
+        }
+
+        try {
+          const dirents = await readdir(absPath, { withFileTypes: true });
+          const entries = dirents
+            .filter((d) => !HIDDEN.has(d.name) && !d.name.startsWith("."))
+            .sort((a, b) => {
+              // Dirs first, then alphabetical
+              if (a.isDirectory() && !b.isDirectory()) return -1;
+              if (!a.isDirectory() && b.isDirectory()) return 1;
+              return a.name.localeCompare(b.name);
+            })
+            .map((d) => ({
+              name: d.name,
+              type: d.isDirectory() ? "dir" : "file",
+              path: reqPath === "." ? d.name : join(reqPath, d.name).replace(/\\/g, "/"),
+            }));
+
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ entries }));
+        } catch (err: any) {
+          res.writeHead(404);
+          res.end(JSON.stringify({ error: err.message }));
+        }
         return;
       }
 

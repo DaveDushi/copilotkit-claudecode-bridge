@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect } from "react";
 import { useSessionCapabilities } from "../hooks/useSessionCapabilities";
+import { colors, spacing, radius, shadows, typography, transitions } from "../styles";
 
 const MODES = [
-  { value: "default", label: "Default", description: "Ask before risky actions", color: "#666" },
-  { value: "plan", label: "Plan", description: "Read-only planning mode", color: "#0066cc" },
-  { value: "acceptEdits", label: "Accept Edits", description: "Auto-accept file edits", color: "#2e7d32" },
-  { value: "bypassPermissions", label: "Dangerous", description: "Skip all permission checks", color: "#c62828" },
-  { value: "dontAsk", label: "Don't Ask", description: "Never prompt for approval", color: "#e65100" },
+  { value: "default", label: "Default", description: "Ask before risky actions", color: colors.textSecondary },
+  { value: "plan", label: "Plan", description: "Read-only planning mode", color: colors.info },
+  { value: "acceptEdits", label: "Accept Edits", description: "Auto-accept file edits", color: colors.success },
+  { value: "bypassPermissions", label: "Dangerous", description: "Skip all permission checks", color: colors.error },
+  { value: "dontAsk", label: "Don't Ask", description: "Never prompt for approval", color: colors.warning },
 ];
 
 export function ChatHeader() {
@@ -33,13 +34,20 @@ export function ChatHeader() {
       display: "flex",
       alignItems: "center",
       justifyContent: "space-between",
-      padding: "10px 14px",
-      borderBottom: "1px solid #e8e8e8",
-      background: "#fff",
+      padding: `${spacing.md}px ${spacing.lg}px`,
+      borderBottom: `1px solid ${colors.borderLight}`,
+      background: colors.surface,
       minHeight: 44,
+      fontFamily: typography.fontFamily,
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 14, fontWeight: 700, color: "#333" }}>Claude Code</span>
+      <div style={{ display: "flex", alignItems: "center", gap: spacing.sm }}>
+        <span style={{
+          fontSize: typography.sizes.lg,
+          fontWeight: typography.weights.bold,
+          color: colors.text,
+        }}>
+          Claude Code
+        </span>
       </div>
 
       {/* Mode badge + dropdown */}
@@ -49,15 +57,17 @@ export function ChatHeader() {
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 4,
-            padding: "3px 8px",
-            fontSize: 11,
-            fontWeight: 600,
+            gap: spacing.xs,
+            padding: `3px ${spacing.sm}px`,
+            fontSize: typography.sizes.xs,
+            fontWeight: typography.weights.semibold,
+            fontFamily: typography.fontFamily,
             color: currentMode.color,
             background: `${currentMode.color}12`,
             border: `1px solid ${currentMode.color}30`,
-            borderRadius: 4,
+            borderRadius: radius.sm,
             cursor: "pointer",
+            transition: transitions.fast,
           }}
         >
           {currentMode.label}
@@ -69,16 +79,25 @@ export function ChatHeader() {
             position: "absolute",
             top: "100%",
             right: 0,
-            marginTop: 4,
-            background: "#fff",
-            border: "1px solid #ddd",
-            borderRadius: 8,
-            boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+            marginTop: spacing.xs,
+            background: colors.surface,
+            border: `1px solid ${colors.border}`,
+            borderRadius: radius.md,
+            boxShadow: shadows.lg,
             zIndex: 1000,
-            minWidth: 200,
+            minWidth: 220,
             overflow: "hidden",
           }}>
-            <div style={{ padding: "6px 10px", fontSize: 10, fontWeight: 600, color: "#999", textTransform: "uppercase", borderBottom: "1px solid #f0f0f0" }}>
+            <div style={{
+              padding: `${spacing.sm}px ${spacing.md}px`,
+              fontSize: 10,
+              fontWeight: typography.weights.semibold,
+              color: colors.textMuted,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              borderBottom: `1px solid ${colors.borderLight}`,
+              fontFamily: typography.fontFamily,
+            }}>
               Permission Mode
             </div>
             {MODES.map((mode) => (
@@ -91,24 +110,36 @@ export function ChatHeader() {
                 style={{
                   display: "block",
                   width: "100%",
-                  padding: "8px 10px",
+                  padding: `${spacing.sm}px ${spacing.md}px`,
                   border: "none",
-                  background: mode.value === currentMode.value ? "#f5f5f5" : "transparent",
+                  background: mode.value === currentMode.value ? colors.surfaceHover : "transparent",
                   cursor: "pointer",
                   textAlign: "left",
+                  transition: transitions.fast,
+                  fontFamily: typography.fontFamily,
                 }}
               >
                 <div style={{
-                  fontSize: 12,
-                  fontWeight: mode.value === currentMode.value ? 700 : 500,
+                  fontSize: typography.sizes.sm,
+                  fontWeight: mode.value === currentMode.value ? typography.weights.bold : typography.weights.medium,
                   color: mode.color,
                 }}>
                   {mode.label}
                   {mode.value === currentMode.value && (
-                    <span style={{ marginLeft: 6, fontSize: 10, color: "#999" }}>(current)</span>
+                    <span style={{
+                      marginLeft: spacing.sm,
+                      fontSize: 10,
+                      color: colors.textMuted,
+                    }}>
+                      (current)
+                    </span>
                   )}
                 </div>
-                <div style={{ fontSize: 10, color: "#888", marginTop: 1 }}>
+                <div style={{
+                  fontSize: 10,
+                  color: colors.textMuted,
+                  marginTop: 1,
+                }}>
                   {mode.description}
                 </div>
               </button>

@@ -10,11 +10,12 @@
  */
 import React from "react";
 import { useCopilotReadable, useCopilotAction } from "@copilotkit/react-core";
+import { colors, radius, spacing, typography } from "../styles";
 import type { CanvasComponent, CanvasComponentType } from "../types";
 
 const VALID_TYPES: CanvasComponentType[] = [
-  "data-table", "editable-table", "line-chart", "bar-chart",
-  "json-viewer", "key-value", "progress-dashboard", "custom",
+  "data-table", "editable-table", "line-chart", "bar-chart", "pie-chart",
+  "json-viewer", "key-value", "progress-dashboard", "tab-container", "custom",
 ];
 
 export function useCanvas(
@@ -40,9 +41,11 @@ export function useCanvas(
       '  editable-table: same format as data-table, but user can edit cells, add/delete rows, and AI can see + make edits via scoped actions',
       '  line-chart: { "xKey": "month", "yKeys": ["revenue"], "data": [{"month":"Jan","revenue":100}] }',
       '  bar-chart:  same format as line-chart',
+      '  pie-chart:  { "data": [{"name":"Category A","value":400}], "innerRadius": 0 }',
       '  json-viewer: any JSON object or array (pass directly as data)',
       '  key-value:  { "entries": [{"key":"Name","value":"MyProject"}] }',
       '  progress-dashboard: { "items": [{"label":"Tests","value":85,"max":100,"status":"success"}] }',
+      '  tab-container: { "tabs": [{"label":"Overview","type":"key-value","data":{...}}, {"label":"Data","type":"data-table","data":{...}}] }',
       '  custom: { "html": "<div>Any HTML/CSS you want — rendered in a sandboxed iframe</div>" }',
       "",
       "Use \"custom\" when none of the built-in types fit. You can include <style> tags, SVG, flexbox, grid, interactive JS — anything.",
@@ -85,25 +88,37 @@ export function useCanvas(
         parsedData._tableId = componentId;
       }
 
-      setComponents((prev) => {
-        const existing = prev.findIndex((c) => c.id === componentId);
-        if (existing >= 0) {
-          // Update in place
-          const updated = [...prev];
-          updated[existing] = { ...updated[existing], title, data: parsedData, timestamp: Date.now() };
-          return updated;
-        }
-        // Add new
-        return [...prev, {
-          id: componentId,
-          type: type as CanvasComponentType,
-          title,
-          data: parsedData,
-          timestamp: Date.now(),
-        }];
+      // Use a promise to capture the updated canvas state from the setter
+      const canvasSummary = await new Promise<string>((resolve) => {
+        setComponents((prev) => {
+          const existing = prev.findIndex((c) => c.id === componentId);
+          let next: CanvasComponent[];
+          if (existing >= 0) {
+            next = [...prev];
+            next[existing] = { ...next[existing], title, data: parsedData, timestamp: Date.now() };
+          } else {
+            next = [...prev, {
+              id: componentId,
+              type: type as CanvasComponentType,
+              title,
+              data: parsedData,
+              timestamp: Date.now(),
+            }];
+          }
+          // Build summary of everything now on canvas so Claude knows full state
+          const summary = next.map((c) => `  - "${c.title}" (${c.type}, id=${c.id})`).join("\n");
+          resolve(summary);
+          return next;
+        });
       });
 
-      return `Visualization "${title}" (${type}) displayed on canvas.`;
+      return [
+        `SUCCESS: "${title}" (${type}) is now displayed on the canvas.`,
+        `Canvas now contains ${canvasSummary.split("\n").length} item(s):`,
+        canvasSummary,
+        "",
+        "Do NOT re-create these — they are already visible to the user.",
+      ].join("\n");
     },
     render: ({ status, args }: any) => (
       <InlineCard
@@ -120,7 +135,7 @@ export function useCanvas(
     parameters: [],
     handler: async () => {
       setComponents([]);
-      return "Canvas cleared.";
+      return "Canvas cleared. Canvas is now empty (0 items).";
     },
     render: ({ status }: any) => (
       <InlineCard
@@ -133,14 +148,14 @@ export function useCanvas(
 function InlineCard({ title, detail }: { title: string; detail?: string }) {
   return (
     <div style={{
-      background: "#f3e5f5",
-      borderRadius: 8,
-      padding: "10px 14px",
-      margin: "4px 0",
-      fontSize: 13,
+      background: colors.toolCanvas,
+      borderRadius: radius.md,
+      padding: `${spacing.sm}px ${spacing.lg}px`,
+      margin: `${spacing.xs}px 0`,
+      fontSize: typography.sizes.md,
     }}>
-      <div style={{ fontWeight: 600 }}>{title}</div>
-      {detail && <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>{detail}</div>}
+      <div style={{ fontWeight: typography.weights.semibold, color: colors.text }}>{title}</div>
+      {detail && <div style={{ fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: 2 }}>{detail}</div>}
     </div>
   );
 }

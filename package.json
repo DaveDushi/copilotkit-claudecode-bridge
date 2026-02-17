@@ -1,7 +1,7 @@
 {
   "name": "copilotkit-claude-bridge",
   "version": "0.1.0",
-  "description": "Bridge between CopilotKit (AG-UI protocol) and Claude Code CLI",
+  "description": "Build your own GUI for Claude Code. Bridges Claude Code CLI (SDK mode) with any CopilotKit React app via the AG-UI protocol.",
   "type": "module",
   "exports": {
     ".": {
@@ -64,7 +64,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-org/copilotkit-claude-bridge"
+    "url": "https://github.com/DaveDushi/copilotkit-claudecode-bridge"
   },
   "keywords": [
     "copilotkit",
@@ -72,6 +72,9 @@
     "claude-code",
     "ag-ui",
     "bridge",
-    "ai-agent"
+    "ai-agent",
+    "custom-gui",
+    "ai-coding",
+    "developer-tools"
   ]
 }

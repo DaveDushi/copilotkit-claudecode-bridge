@@ -9,10 +9,12 @@ interface Props {
 /**
  * Renders arbitrary HTML/CSS from Claude inside a sandboxed iframe.
  *
- * Security: sandbox="allow-scripts" lets JS run but prevents:
- *   - Access to parent DOM, cookies, localStorage
- *   - Same-origin requests to the parent
+ * Security: sandbox="allow-scripts allow-same-origin" lets JS run with
+ * same-origin access (needed for tab switching, hash navigation, computed
+ * styles, etc.) while still preventing:
+ *   - Form submission
  *   - Top-level navigation
+ *   - Popups
  *
  * Auto-resizes to match content height via postMessage.
  */
@@ -61,7 +63,7 @@ ${html}
       if (e.data?.type === "iframe-resize" && typeof e.data.height === "number") {
         // Only accept messages from our iframe
         if (iframeRef.current && e.source === iframeRef.current.contentWindow) {
-          setHeight(Math.max(100, Math.min(800, e.data.height)));
+          setHeight(Math.max(100, Math.min(2000, e.data.height)));
         }
       }
     };
@@ -77,7 +79,7 @@ ${html}
     <iframe
       ref={iframeRef}
       srcDoc={srcdoc}
-      sandbox="allow-scripts"
+      sandbox="allow-scripts allow-same-origin"
       style={{
         width: "100%",
         height,

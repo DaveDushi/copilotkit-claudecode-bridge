@@ -16,6 +16,7 @@
     "html2canvas": "^1.4.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-resizable-panels": "^2.1.0",
     "recharts": "^2.15.0"
   },
   "devDependencies": {

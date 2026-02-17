@@ -4,15 +4,20 @@
  * When Claude uses tools like Bash, Edit, Write, Read, Glob, or Grep,
  * instead of showing raw JSON in the chat, we render styled cards.
  *
- * This uses CopilotKit's useRenderToolCall hook — each tool name gets
- * a custom React component that renders during and after execution.
- *
- * useDefaultTool is the catch-all for any tool we haven't explicitly handled.
+ * Uses design tokens from styles.ts for consistent, polished appearance.
  */
 import React from "react";
 import { useRenderToolCall, useDefaultTool } from "@copilotkit/react-core";
+import { colors, spacing, radius, shadows, typography, transitions } from "../styles";
 
-export function ToolRenderers() {
+/** Shape of a single todo item from TodoWrite */
+export interface TodoItem {
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+  activeForm: string;
+}
+
+export function ToolRenderers({ onTodosUpdate }: { onTodosUpdate?: (todos: TodoItem[]) => void }) {
   // ── Bash — terminal card with command ────────────────────────────
   useRenderToolCall({
     name: "Bash",
@@ -22,22 +27,30 @@ export function ToolRenderers() {
       { name: "description", type: "string" as const, description: "What the command does" },
     ],
     render: ({ status, args }: any) => (
-      <ToolCard
-        icon="$"
-        title={status === "complete" ? "Command ran" : "Running command..."}
-        bg="#263238"
-        fg="#e0e0e0"
-        mono
-      >
+      <ToolCard accent={colors.toolBash} dark>
+        <ToolHeader
+          icon="$"
+          title={status === "complete" ? "Command ran" : "Running command..."}
+          status={status}
+          dark
+        />
         {args?.description && (
-          <div style={{ color: "#78909c", fontSize: 11, marginBottom: 4 }}>{args.description}</div>
+          <div style={{ color: "#94a3b8", fontSize: typography.sizes.xs, marginTop: spacing.xs }}>
+            {args.description}
+          </div>
         )}
         {args?.command && (
-          <div style={{ color: "#80cbc4", fontFamily: "monospace", fontSize: 12, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+          <div style={{
+            color: "#67e8f9",
+            fontFamily: typography.mono,
+            fontSize: typography.sizes.sm,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-all",
+            marginTop: spacing.xs,
+          }}>
             $ {args.command}
           </div>
         )}
-        {status === "inProgress" && <Spinner />}
       </ToolCard>
     ),
   });
@@ -52,14 +65,11 @@ export function ToolRenderers() {
       { name: "new_string", type: "string" as const },
     ],
     render: ({ status, args }: any) => (
-      <ToolCard icon="~" title={status === "complete" ? "File edited" : "Editing file..."} bg="#e8f5e9">
+      <ToolCard accent={colors.success}>
+        <ToolHeader icon="~" title={status === "complete" ? "File edited" : "Editing file..."} status={status} />
         {args?.file_path && <FilePath path={args.file_path} />}
-        {args?.old_string && (
-          <DiffBlock label="removed" content={args.old_string} color="#ffcdd2" />
-        )}
-        {args?.new_string && (
-          <DiffBlock label="added" content={args.new_string} color="#c8e6c9" />
-        )}
+        {args?.old_string && <DiffBlock label="removed" content={args.old_string} variant="remove" />}
+        {args?.new_string && <DiffBlock label="added" content={args.new_string} variant="add" />}
       </ToolCard>
     ),
   });
@@ -75,9 +85,12 @@ export function ToolRenderers() {
     render: ({ status, args }: any) => {
       const lines = (args?.content ?? "").split("\n").length;
       return (
-        <ToolCard icon="+" title={status === "complete" ? "File written" : "Writing file..."} bg="#e3f2fd">
+        <ToolCard accent={colors.info}>
+          <ToolHeader icon="+" title={status === "complete" ? "File written" : "Writing file..."} status={status} />
           {args?.file_path && <FilePath path={args.file_path} />}
-          <div style={{ fontSize: 11, color: "#666" }}>{lines} line(s)</div>
+          <div style={{ fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: spacing.xs }}>
+            {lines} line{lines !== 1 ? "s" : ""}
+          </div>
         </ToolCard>
       );
     },
@@ -91,7 +104,8 @@ export function ToolRenderers() {
       { name: "file_path", type: "string" as const },
     ],
     render: ({ status, args }: any) => (
-      <ToolCard icon=">" title={status === "complete" ? "File read" : "Reading file..."} bg="#f5f5f5">
+      <ToolCard accent={colors.textMuted}>
+        <ToolHeader icon=">" title={status === "complete" ? "File read" : "Reading file..."} status={status} />
         {args?.file_path && <FilePath path={args.file_path} />}
       </ToolCard>
     ),
@@ -106,11 +120,14 @@ export function ToolRenderers() {
       { name: "path", type: "string" as const },
     ],
     render: ({ status, args }: any) => (
-      <ToolCard icon="*" title={status === "complete" ? "Files found" : "Searching files..."} bg="#fff3e0">
+      <ToolCard accent={colors.warning}>
+        <ToolHeader icon="*" title={status === "complete" ? "Files found" : "Searching files..."} status={status} />
         {args?.pattern && (
-          <div style={{ fontFamily: "monospace", fontSize: 12, color: "#e65100" }}>{args.pattern}</div>
+          <div style={{ fontFamily: typography.mono, fontSize: typography.sizes.sm, color: "#d97706", marginTop: spacing.xs }}>
+            {args.pattern}
+          </div>
         )}
-        {args?.path && <div style={{ fontSize: 11, color: "#888" }}>in {args.path}</div>}
+        {args?.path && <div style={{ fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: 2 }}>in {args.path}</div>}
       </ToolCard>
     ),
   });
@@ -125,12 +142,15 @@ export function ToolRenderers() {
       { name: "glob", type: "string" as const },
     ],
     render: ({ status, args }: any) => (
-      <ToolCard icon="/" title={status === "complete" ? "Search complete" : "Searching contents..."} bg="#fce4ec">
+      <ToolCard accent={colors.error}>
+        <ToolHeader icon="/" title={status === "complete" ? "Search complete" : "Searching contents..."} status={status} />
         {args?.pattern && (
-          <div style={{ fontFamily: "monospace", fontSize: 12, color: "#c62828" }}>/{args.pattern}/</div>
+          <div style={{ fontFamily: typography.mono, fontSize: typography.sizes.sm, color: "#dc2626", marginTop: spacing.xs }}>
+            /{args.pattern}/
+          </div>
         )}
         {(args?.path || args?.glob) && (
-          <div style={{ fontSize: 11, color: "#888" }}>
+          <div style={{ fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: 2 }}>
             {args.path && `in ${args.path}`}{args.glob && ` (${args.glob})`}
           </div>
         )}
@@ -138,17 +158,74 @@ export function ToolRenderers() {
     ),
   });
 
-  // ── TodoWrite — task management ──────────────────────────────────
+  // ── TodoWrite — task management with full list rendering ─────────
   useRenderToolCall({
     name: "TodoWrite",
     description: "Task management",
-    parameters: [],
-    render: ({ status }: any) => (
-      <ToolCard icon="v" title={status === "complete" ? "Tasks updated" : "Updating tasks..."} bg="#f3e5f5" />
-    ),
+    parameters: [
+      { name: "todos", type: "string" as const, description: "JSON array of todo items" },
+    ],
+    render: ({ status, args }: any) => {
+      let todos: TodoItem[] = [];
+      try {
+        const raw = args?.todos;
+        if (Array.isArray(raw)) todos = raw;
+        else if (typeof raw === "string") todos = JSON.parse(raw);
+      } catch { /* ignore parse errors */ }
+
+      // Report todos to parent for the persistent task panel
+      if (todos.length > 0 && status === "complete" && onTodosUpdate) {
+        // Use setTimeout to avoid setState during render
+        setTimeout(() => onTodosUpdate(todos), 0);
+      }
+
+      const done = todos.filter((t) => t.status === "completed").length;
+      const total = todos.length;
+
+      return (
+        <ToolCard accent={colors.accent}>
+          <ToolHeader
+            icon={"\u2713"}
+            title={status === "complete" ? `Tasks (${done}/${total})` : "Updating tasks..."}
+            status={status}
+          />
+          {todos.length > 0 && (
+            <div style={{ marginTop: spacing.sm, display: "flex", flexDirection: "column", gap: 3 }}>
+              {todos.map((todo, i) => {
+                const icon = todo.status === "completed" ? "\u2713"
+                  : todo.status === "in_progress" ? "\u25CF"
+                  : "\u25CB";
+                const iconColor = todo.status === "completed" ? colors.success
+                  : todo.status === "in_progress" ? colors.accent
+                  : colors.textMuted;
+                return (
+                  <div key={i} style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: spacing.sm,
+                    fontSize: typography.sizes.sm,
+                    color: todo.status === "completed" ? colors.textMuted : colors.text,
+                    textDecoration: todo.status === "completed" ? "line-through" : "none",
+                  }}>
+                    <span style={{
+                      color: iconColor,
+                      fontSize: 10,
+                      width: 14,
+                      textAlign: "center",
+                      flexShrink: 0,
+                    }}>{icon}</span>
+                    <span>{todo.status === "in_progress" ? todo.activeForm : todo.content}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </ToolCard>
+      );
+    },
   });
 
-  // ── spawnCanvas — dynamic visualization ────────────────────────────
+  // ── spawnCanvas — dynamic visualization ──────────────────────────
   useRenderToolCall({
     name: "spawnCanvas",
     description: "Canvas visualization",
@@ -157,8 +234,13 @@ export function ToolRenderers() {
       { name: "title", type: "string" as const },
     ],
     render: ({ status, args }: any) => (
-      <ToolCard icon="&#9671;" title={status === "complete" ? `Canvas: ${args?.title ?? ""}` : "Creating visualization..."} bg="#f3e5f5">
-        {args?.type && <div style={{ fontSize: 11, color: "#888" }}>{args.type}</div>}
+      <ToolCard accent={colors.accent}>
+        <ToolHeader
+          icon="&#9671;"
+          title={status === "complete" ? `Canvas: ${args?.title ?? ""}` : "Creating visualization..."}
+          status={status}
+        />
+        {args?.type && <div style={{ fontSize: typography.sizes.xs, color: colors.textMuted, marginTop: spacing.xs }}>{args.type}</div>}
       </ToolCard>
     ),
   });
@@ -166,105 +248,152 @@ export function ToolRenderers() {
   // ── Default catch-all for any other tool ─────────────────────────
   useDefaultTool({
     render: ({ name, status, args }: any) => (
-      <ToolCard
-        icon="?"
-        title={status === "complete" ? `${name} complete` : `Running ${name}...`}
-        bg="#f5f5f5"
-      >
-        {status === "inProgress" && <Spinner />}
+      <ToolCard accent={colors.textMuted}>
+        <ToolHeader
+          icon="?"
+          title={status === "complete" ? `${name} complete` : `Running ${name}...`}
+          status={status}
+        />
       </ToolCard>
     ),
   });
 
-  return null; // This component just registers hooks — no visible output
+  return null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Shared UI pieces for tool cards
+// Shared UI pieces
 // ═══════════════════════════════════════════════════════════════════════════
 
 function ToolCard({
-  icon,
-  title,
-  bg,
-  fg,
-  mono,
+  accent,
+  dark,
   children,
 }: {
-  icon: string;
-  title: string;
-  bg: string;
-  fg?: string;
-  mono?: boolean;
+  accent: string;
+  dark?: boolean;
   children?: React.ReactNode;
 }) {
   return (
     <div style={{
-      background: bg,
-      color: fg ?? "#333",
-      borderRadius: 8,
-      padding: "10px 14px",
-      margin: "4px 0",
-      fontSize: 13,
-      fontFamily: mono ? "monospace" : "inherit",
+      background: dark ? colors.toolBash : colors.surface,
+      color: dark ? colors.toolBashFg : colors.text,
+      borderRadius: radius.md,
+      padding: `${spacing.sm}px ${spacing.lg}px`,
+      margin: `${spacing.xs}px 0`,
+      fontSize: typography.sizes.md,
+      fontFamily: dark ? typography.mono : typography.fontFamily,
+      borderLeft: `4px solid ${accent}`,
+      boxShadow: shadows.sm,
+      transition: transitions.fast,
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: children ? 6 : 0 }}>
-        <span style={{
-          width: 20,
-          height: 20,
-          borderRadius: 4,
-          background: fg ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.08)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: 11,
-          fontWeight: 700,
-          fontFamily: "monospace",
-          flexShrink: 0,
-        }}>
-          {icon}
-        </span>
-        <span style={{ fontWeight: 600 }}>{title}</span>
-      </div>
       {children}
     </div>
   );
 }
 
-function FilePath({ path }: { path: string }) {
-  const name = path.replace(/\\/g, "/").split("/").pop() ?? path;
+function ToolHeader({
+  icon,
+  title,
+  status,
+  dark,
+}: {
+  icon: string;
+  title: string;
+  status: string;
+  dark?: boolean;
+}) {
   return (
-    <div style={{ fontSize: 12, fontFamily: "monospace", marginBottom: 2 }} title={path}>
-      <span style={{ color: "#888" }}>{path.replace(/\\/g, "/").slice(0, -name.length)}</span>
-      <span style={{ fontWeight: 600 }}>{name}</span>
+    <div style={{
+      display: "flex",
+      alignItems: "center",
+      gap: spacing.sm,
+    }}>
+      <span style={{
+        width: 20,
+        height: 20,
+        borderRadius: radius.sm,
+        background: dark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.05)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: typography.sizes.xs,
+        fontWeight: typography.weights.bold,
+        fontFamily: typography.mono,
+        flexShrink: 0,
+      }}>
+        {icon}
+      </span>
+      <span style={{ fontWeight: typography.weights.semibold, fontSize: typography.sizes.md }}>
+        {title}
+      </span>
+      {status === "inProgress" && (
+        <span
+          className="pulse"
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: 3,
+            background: colors.accent,
+            display: "inline-block",
+            marginLeft: spacing.xs,
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function DiffBlock({ label, content, color }: { label: string; content: string; color: string }) {
-  const preview = content.length > 150 ? content.slice(0, 150) + "..." : content;
+function FilePath({ path }: { path: string }) {
+  const normalized = path.replace(/\\/g, "/");
+  const name = normalized.split("/").pop() ?? path;
+  const dir = normalized.slice(0, -name.length);
   return (
     <div style={{
-      background: color,
-      borderRadius: 4,
-      padding: "4px 8px",
-      marginTop: 4,
-      fontSize: 11,
-      fontFamily: "monospace",
+      fontSize: typography.sizes.sm,
+      fontFamily: typography.mono,
+      marginTop: spacing.xs,
+    }} title={path}>
+      <span style={{ color: colors.textMuted }}>{dir}</span>
+      <span style={{ fontWeight: typography.weights.semibold, color: colors.text }}>{name}</span>
+    </div>
+  );
+}
+
+function DiffBlock({
+  label,
+  content,
+  variant,
+}: {
+  label: string;
+  content: string;
+  variant: "add" | "remove";
+}) {
+  const preview = content.length > 200 ? content.slice(0, 200) + "..." : content;
+  const bg = variant === "add" ? colors.successLight : colors.errorLight;
+  const labelColor = variant === "add" ? colors.success : colors.error;
+
+  return (
+    <div style={{
+      background: bg,
+      borderRadius: radius.sm,
+      padding: `${spacing.xs}px ${spacing.sm}px`,
+      marginTop: spacing.xs,
+      fontSize: typography.sizes.xs,
+      fontFamily: typography.mono,
       whiteSpace: "pre-wrap",
       maxHeight: 80,
       overflow: "auto",
     }}>
-      <span style={{ fontWeight: 600, fontSize: 10, textTransform: "uppercase" }}>{label}: </span>
+      <span style={{
+        fontWeight: typography.weights.bold,
+        fontSize: 10,
+        textTransform: "uppercase",
+        color: labelColor,
+      }}>
+        {label}:{" "}
+      </span>
       {preview}
-    </div>
-  );
-}
-
-function Spinner() {
-  return (
-    <div style={{ marginTop: 4, fontSize: 11, color: "#888" }}>
-      Working...
     </div>
   );
 }

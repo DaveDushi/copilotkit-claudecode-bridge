@@ -1,13 +1,14 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useToolApprovalContext } from "../contexts/ToolApprovalContext";
 import { useSessionCapabilities } from "../hooks/useSessionCapabilities";
+import { colors, spacing, radius, shadows, typography, transitions } from "../styles";
 import type { ToolApprovalRequest } from "../hooks/useToolApproval";
 
 interface AutocompleteItem {
   type: "command" | "skill";
   name: string;
   description: string;
-  value: string; // what gets sent
+  value: string;
 }
 
 export function ChatInput({
@@ -35,8 +36,6 @@ export function ChatInput({
   // Build autocomplete items from capabilities
   const allItems = useMemo<AutocompleteItem[]>(() => {
     const items: AutocompleteItem[] = [];
-
-    // Commands from initData (have descriptions)
     if (capabilities?.commands) {
       for (const cmd of capabilities.commands) {
         items.push({
@@ -47,8 +46,6 @@ export function ChatInput({
         });
       }
     }
-
-    // Skills
     if (capabilities?.skills) {
       for (const skill of capabilities.skills) {
         items.push({
@@ -59,7 +56,6 @@ export function ChatInput({
         });
       }
     }
-
     return items;
   }, [capabilities]);
 
@@ -129,11 +125,11 @@ export function ChatInput({
       {/* ── Approval panel ──────────────────────────────── */}
       {pending.length > 0 && (
         <div style={{
-          background: "#fff8e1",
-          borderRadius: "8px 8px 0 0",
-          border: "1px solid #ffe082",
+          background: colors.warningLight,
+          borderRadius: `${radius.md}px ${radius.md}px 0 0`,
+          border: `1px solid ${colors.warning}33`,
           borderBottom: "none",
-          padding: "8px 10px",
+          padding: `${spacing.sm}px ${spacing.md}px`,
           maxHeight: 200,
           overflowY: "auto",
         }}>
@@ -141,9 +137,14 @@ export function ChatInput({
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            marginBottom: pending.length > 1 ? 6 : 0,
+            marginBottom: pending.length > 1 ? spacing.sm : 0,
           }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: "#f57f17" }}>
+            <span style={{
+              fontSize: typography.sizes.xs,
+              fontWeight: typography.weights.semibold,
+              color: "#b45309",
+              fontFamily: typography.fontFamily,
+            }}>
               {pending.length} tool{pending.length > 1 ? "s" : ""} awaiting approval
             </span>
             {pending.length > 1 && (
@@ -159,13 +160,13 @@ export function ChatInput({
       {/* ── Autocomplete dropdown ───────────────────────── */}
       {showAutocomplete && (
         <div ref={autocompleteRef} style={{
-          background: "#fff",
-          border: "1px solid #ddd",
-          borderRadius: 8,
-          marginBottom: 4,
+          background: colors.surface,
+          border: `1px solid ${colors.border}`,
+          borderRadius: radius.md,
+          marginBottom: spacing.xs,
           maxHeight: 220,
           overflowY: "auto",
-          boxShadow: "0 -4px 12px rgba(0,0,0,0.08)",
+          boxShadow: shadows.lg,
         }}>
           {filteredItems.map((item, i) => (
             <div
@@ -173,32 +174,46 @@ export function ChatInput({
               onClick={() => selectItem(item)}
               onMouseEnter={() => setSelectedIndex(i)}
               style={{
-                padding: "6px 10px",
+                padding: `${spacing.sm}px ${spacing.md}px`,
                 cursor: "pointer",
-                background: i === selectedIndex ? "#f0f4ff" : "transparent",
+                background: i === selectedIndex ? colors.accentLight : "transparent",
                 display: "flex",
                 alignItems: "center",
-                gap: 8,
-                borderBottom: i < filteredItems.length - 1 ? "1px solid #f0f0f0" : "none",
+                gap: spacing.sm,
+                borderBottom: i < filteredItems.length - 1 ? `1px solid ${colors.borderLight}` : "none",
+                transition: transitions.fast,
               }}
             >
               <span style={{
                 fontSize: 9,
-                fontWeight: 700,
+                fontWeight: typography.weights.bold,
                 textTransform: "uppercase",
-                color: item.type === "command" ? "#0066cc" : "#2e7d32",
-                background: item.type === "command" ? "#e3f2fd" : "#e8f5e9",
+                color: item.type === "command" ? colors.info : colors.success,
+                background: item.type === "command" ? colors.infoLight : colors.successLight,
                 padding: "1px 5px",
                 borderRadius: 3,
                 minWidth: 36,
                 textAlign: "center",
+                fontFamily: typography.fontFamily,
               }}>
                 {item.type}
               </span>
-              <span style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 600, color: "#333" }}>
+              <span style={{
+                fontFamily: typography.mono,
+                fontSize: typography.sizes.sm,
+                fontWeight: typography.weights.semibold,
+                color: colors.text,
+              }}>
                 {item.name}
               </span>
-              <span style={{ fontSize: 11, color: "#888", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <span style={{
+                fontSize: typography.sizes.xs,
+                color: colors.textMuted,
+                flex: 1,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}>
                 {item.description}
               </span>
             </div>
@@ -210,11 +225,11 @@ export function ChatInput({
       <div style={{
         display: "flex",
         alignItems: "flex-end",
-        gap: 6,
-        background: "#fff",
-        border: "1px solid #ddd",
-        borderRadius: pending.length > 0 ? "0 0 8px 8px" : 8,
-        padding: "8px 10px",
+        gap: spacing.sm,
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: pending.length > 0 ? `0 0 ${radius.md}px ${radius.md}px` : radius.md,
+        padding: `${spacing.sm}px ${spacing.md}px`,
       }}>
         <textarea
           ref={textareaRef}
@@ -229,11 +244,11 @@ export function ChatInput({
             resize: "none",
             border: "none",
             outline: "none",
-            fontSize: 13,
-            fontFamily: "system-ui, sans-serif",
+            fontSize: typography.sizes.md,
+            fontFamily: typography.fontFamily,
             lineHeight: 1.4,
             background: "transparent",
-            color: "#333",
+            color: colors.text,
             padding: 0,
           }}
         />
@@ -279,27 +294,28 @@ function ApprovalCard({
     <div style={{
       display: "flex",
       alignItems: "center",
-      gap: 6,
-      padding: "5px 8px",
-      marginTop: 4,
-      background: "#fff",
-      borderRadius: 6,
-      border: "1px solid #ffe082",
-      fontSize: 11,
+      gap: spacing.sm,
+      padding: `${spacing.xs + 1}px ${spacing.sm}px`,
+      marginTop: spacing.xs,
+      background: colors.surface,
+      borderRadius: radius.sm,
+      border: `1px solid ${colors.warning}33`,
+      fontSize: typography.sizes.xs,
+      fontFamily: typography.fontFamily,
     }}>
       <span style={{
-        fontWeight: 700,
-        fontFamily: "monospace",
-        color: "#e65100",
+        fontWeight: typography.weights.bold,
+        fontFamily: typography.mono,
+        color: "#c2410c",
         flexShrink: 0,
       }}>
         {req.toolName}
       </span>
       <span style={{
         flex: 1,
-        fontFamily: "monospace",
+        fontFamily: typography.mono,
         fontSize: 10,
-        color: "#555",
+        color: colors.textSecondary,
         overflow: "hidden",
         textOverflow: "ellipsis",
         whiteSpace: "nowrap",
@@ -328,22 +344,67 @@ function formatToolInput(name: string, input: Record<string, unknown>): string {
 // ═══════════════════════════════════════════════════════════════
 
 const approveAllBtn: React.CSSProperties = {
-  fontSize: 10, fontWeight: 600, background: "#4caf50", color: "#fff",
-  border: "none", borderRadius: 4, padding: "2px 8px", cursor: "pointer",
+  fontSize: 10,
+  fontWeight: typography.weights.semibold,
+  background: colors.success,
+  color: "#fff",
+  border: "none",
+  borderRadius: radius.sm,
+  padding: "2px 8px",
+  cursor: "pointer",
+  fontFamily: typography.fontFamily,
 };
+
 const allowBtn: React.CSSProperties = {
-  fontSize: 10, fontWeight: 600, background: "#4caf50", color: "#fff",
-  border: "none", borderRadius: 4, padding: "2px 8px", cursor: "pointer", flexShrink: 0,
+  fontSize: 10,
+  fontWeight: typography.weights.semibold,
+  background: colors.success,
+  color: "#fff",
+  border: "none",
+  borderRadius: radius.sm,
+  padding: "2px 8px",
+  cursor: "pointer",
+  flexShrink: 0,
+  fontFamily: typography.fontFamily,
 };
+
 const denyBtn: React.CSSProperties = {
-  fontSize: 10, fontWeight: 500, background: "transparent", color: "#c62828",
-  border: "1px solid #ef9a9a", borderRadius: 4, padding: "1px 6px", cursor: "pointer", flexShrink: 0,
+  fontSize: 10,
+  fontWeight: typography.weights.medium,
+  background: "transparent",
+  color: colors.error,
+  border: `1px solid ${colors.error}40`,
+  borderRadius: radius.sm,
+  padding: "1px 6px",
+  cursor: "pointer",
+  flexShrink: 0,
+  fontFamily: typography.fontFamily,
 };
+
 const sendBtn: React.CSSProperties = {
-  fontSize: 12, fontWeight: 600, background: "#0066cc", color: "#fff",
-  border: "none", borderRadius: 6, padding: "5px 14px", cursor: "pointer", flexShrink: 0,
+  fontSize: typography.sizes.sm,
+  fontWeight: typography.weights.semibold,
+  background: colors.accent,
+  color: "#fff",
+  border: "none",
+  borderRadius: radius.sm,
+  padding: `${spacing.xs + 1}px ${spacing.lg}px`,
+  cursor: "pointer",
+  flexShrink: 0,
+  fontFamily: typography.fontFamily,
+  transition: transitions.fast,
 };
+
 const stopBtn: React.CSSProperties = {
-  fontSize: 12, fontWeight: 600, background: "#c62828", color: "#fff",
-  border: "none", borderRadius: 6, padding: "5px 14px", cursor: "pointer", flexShrink: 0,
+  fontSize: typography.sizes.sm,
+  fontWeight: typography.weights.semibold,
+  background: colors.error,
+  color: "#fff",
+  border: "none",
+  borderRadius: radius.sm,
+  padding: `${spacing.xs + 1}px ${spacing.lg}px`,
+  cursor: "pointer",
+  flexShrink: 0,
+  fontFamily: typography.fontFamily,
+  transition: transitions.fast,
 };

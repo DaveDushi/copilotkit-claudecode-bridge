@@ -1,42 +1,122 @@
 /**
- * Claude Code Canvas — Dynamic UI spawning demo.
+ * File Analysis Studio — CopilotKit + Claude Code showcase.
  *
- * Chat sidebar (CopilotKit) + Canvas area (where Claude spawns visualizations).
- * Tool approvals and slash-command palette live inside the chat sidebar.
+ * Three-panel layout: File Tree | Canvas | CopilotKit Chat Sidebar
+ * Features: interactive generative UI, canvas visualizations, file browsing,
+ * state persistence, and polished demo-quality UI.
  */
 import { useState, useCallback, useEffect } from "react";
 import { CopilotKit } from "@copilotkit/react-core";
 import { CopilotSidebar } from "@copilotkit/react-ui";
 import "@copilotkit/react-ui/styles.css";
 
-import { DynamicCanvas } from "./components/DynamicCanvas";
+import { StudioLayout } from "./components/StudioLayout";
+import { FullscreenOverlay } from "./components/DynamicCanvas";
 import { ToolRenderers } from "./components/ToolRenderers";
 import { ChatInput } from "./components/ChatInput";
 import { ChatHeader } from "./components/ChatHeader";
 import { useCanvas } from "./hooks/useCanvas";
+import { useInteractiveActions } from "./hooks/useInteractiveActions";
+import { useStatePersistence } from "./hooks/useStatePersistence";
 import { useToolApproval } from "./hooks/useToolApproval";
 import { ToolApprovalContext } from "./contexts/ToolApprovalContext";
+import { colors, spacing, radius, shadows, typography, transitions } from "./styles";
 import type { CanvasComponent } from "./types";
+import type { TodoItem } from "./components/ToolRenderers";
 
 const RUNTIME_URL = "http://localhost:3000";
 const MGMT_API = "http://localhost:3002";
 
 // ═══════════════════════════════════════════════════════════════════════════
+// System prompt for Claude — instructs use of interactive UI + canvas
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SYSTEM_PROMPT = [
+  "You are Claude Code running in the File Analysis Studio.",
+  "",
+  "== INTERACTIVE UI (renders inline in chat) ==",
+  "You have actions that create interactive UI directly in the chat:",
+  "  - confirmAction: Ask user to confirm/cancel before proceeding",
+  "  - chooseOption: Present options for user to pick from",
+  "  - collectInput: Show a form for user to fill in",
+  "  - reviewAndEdit: Present draft content for user to review/edit",
+  "  - showProgress: Display a live progress tracker",
+  "",
+  "ALWAYS use these when you need user input rather than asking in plain text.",
+  "Examples:",
+  "  - Need to confirm deleting files? Use confirmAction",
+  "  - User should pick between analysis approaches? Use chooseOption",
+  "  - Creating a product listing or config? Use collectInput for structured fields,",
+  "    then reviewAndEdit to let them polish the result",
+  "  - Running a multi-step analysis? Use showProgress to track steps",
+  "",
+  "== CANVAS (persistent visualizations) ==",
+  "Use spawnCanvas for data visualizations on the canvas:",
+  "  data-table, editable-table, line-chart, bar-chart, pie-chart,",
+  "  json-viewer, key-value, progress-dashboard, tab-container, custom",
+  "",
+  "For collaborative data editing, use editable-table — user can double-click to edit,",
+  "and you can modify cells via scoped actions.",
+  "",
+  "For grouped analysis, use tab-container to combine multiple views in tabs.",
+  "",
+  "For custom layouts, diagrams, or anything not covered, use type \"custom\" with HTML.",
+  "",
+  "== FILE CONTEXT ==",
+  "When files are selected in the left sidebar, you'll see them in your context.",
+  "Proactively analyze selected files and show results on the canvas.",
+  "",
+  "== SKILLS ==",
+  "Before responding to a user request, ALWAYS check your available skills and actions first.",
+  "If a skill or action matches what the user is asking for, use it instead of doing the task manually.",
+  "Skills extend your capabilities — prefer them over raw tool calls when available.",
+  "",
+  "== AVOIDING REDUNDANT WORK ==",
+  "CRITICAL: Before analyzing files or creating visualizations, ALWAYS check the current canvas state first.",
+  "If the work is already done and visible on the canvas, DO NOT redo it.",
+  "If the user sends the same or similar message again, treat it as 'is this done?' — respond with a summary",
+  "of what's already on screen and ask what they'd like to change. NEVER clear + rebuild unless explicitly asked.",
+  "If spawnCanvas returns an error like 'No such tool', ignore it — the visualization was still created.",
+  "",
+  "== STRATEGY ==",
+  "1. Check skills/actions first — use them when they match",
+  "2. Interactive UI for user decisions, forms, and reviews",
+  "3. Canvas for data visualization and persistent displays",
+  "4. Text for explanations and conversation",
+  "5. Prefer visual output over text whenever possible",
+  "6. Don't just describe data — show it on the canvas",
+  "7. Check canvas state before re-doing any work",
+].join("\n");
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Inner workspace — has access to CopilotKit context
 // ═══════════════════════════════════════════════════════════════════════════
 
-function Workspace() {
+function Workspace({ onNewSession }: { onNewSession: () => void }) {
   const [components, setComponents] = useState<CanvasComponent[]>([]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [todos, setTodos] = useState<TodoItem[]>([]);
   const toolApproval = useToolApproval();
 
   // Register canvas actions + readable with CopilotKit
   useCanvas(components, setComponents);
+
+  // Register interactive generative UI actions
+  useInteractiveActions();
+
+  // State persistence (save/load snapshots)
+  const { snapshots, handleSave, handleLoad, handleDelete } = useStatePersistence(
+    components,
+    setComponents,
+  );
 
   const handleRemove = useCallback((id: string) => {
     setComponents((prev) => prev.filter((c) => c.id !== id));
   }, []);
 
   const handleClear = useCallback(() => setComponents([]), []);
+
+  const expandedComponent = expandedId ? components.find((c) => c.id === expandedId) : null;
 
   return (
     <ToolApprovalContext.Provider value={toolApproval}>
@@ -46,69 +126,35 @@ function Workspace() {
         hitEscapeToClose={false}
         Input={ChatInput}
         Header={ChatHeader}
-        instructions={[
-          "You are Claude Code with full system access, running in a web workspace.",
-          "You have a special ability: the spawnCanvas tool lets you render interactive",
-          "visualizations (tables, charts, JSON viewers, dashboards) on the user's canvas.",
-          "",
-          "ALWAYS prefer visual output over text when showing data:",
-          "  - Rows of data -> spawnCanvas type \"data-table\"",
-          "  - Trends / time series -> spawnCanvas type \"line-chart\"",
-          "  - Comparisons / categories -> spawnCanvas type \"bar-chart\"",
-          "  - JSON / config objects -> spawnCanvas type \"json-viewer\"",
-          "  - Summary stats / metadata -> spawnCanvas type \"key-value\"",
-          "  - Status / progress -> spawnCanvas type \"progress-dashboard\"",
-          "",
-          "For collaborative data editing, use type \"editable-table\" instead of \"data-table\".",
-          "  - User can double-click cells to edit, add rows, and delete rows",
-          "  - You can see live table state via readable context and edit via editTableCells_<id>, addTableRows_<id>, deleteTableRows_<id>",
-          "",
-          "For ANYTHING else that doesn't fit the built-in types, use type \"custom\":",
-          "  - data format: {\"html\": \"<div>...any HTML/CSS you want...</div>\"}",
-          "  - You can include <style> tags, inline styles, SVG, flexbox, grid, etc.",
-          "  - The HTML renders in a sandboxed iframe — scripts are allowed but isolated",
-          "  - Use this for: custom layouts, diagrams, styled reports, interactive widgets, anything visual",
-          "",
-          "Don't just describe data in text. Show it on the canvas.",
-        ].join("\n")}
+        instructions={SYSTEM_PROMPT}
         labels={{
           title: "Claude Code",
-          initial: "I can run commands, read files, and show results visually on your canvas. What would you like to explore?",
+          initial: "I can run commands, read files, and show results visually. I'll use interactive UI for decisions and the canvas for data visualization. What would you like to explore?",
         }}
       >
         {/* Hook-only components (no visible output) */}
-        <ToolRenderers />
+        <ToolRenderers onTodosUpdate={setTodos} />
 
-        <div style={{
-          height: "100vh",
-          display: "flex",
-          flexDirection: "column",
-          fontFamily: "system-ui, sans-serif",
-          background: "#f8f9fa",
-        }}>
-          {/* Header */}
-          <header style={{
-            padding: "10px 16px",
-            borderBottom: "1px solid #e0e0e0",
-            background: "#fff",
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            flexShrink: 0,
-          }}>
-            <h1 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>Claude Code Canvas</h1>
-            <span style={{ fontSize: 12, color: "#999" }}>
-              {components.length > 0 ? `${components.length} visualization${components.length !== 1 ? "s" : ""}` : ""}
-            </span>
-          </header>
+        <StudioLayout
+          components={components}
+          onRemove={handleRemove}
+          onClear={handleClear}
+          snapshots={snapshots}
+          onSaveSnapshot={handleSave}
+          onLoadSnapshot={handleLoad}
+          onDeleteSnapshot={handleDelete}
+          onNewSession={onNewSession}
+          onExpandComponent={setExpandedId}
+          todos={todos}
+        />
 
-          {/* Canvas */}
-          <DynamicCanvas
-            components={components}
-            onRemove={handleRemove}
-            onClear={handleClear}
+        {/* Fullscreen overlay */}
+        {expandedComponent && (
+          <FullscreenOverlay
+            component={expandedComponent}
+            onClose={() => setExpandedId(null)}
           />
-        </div>
+        )}
       </CopilotSidebar>
     </ToolApprovalContext.Provider>
   );
@@ -157,7 +203,28 @@ export default function App() {
     }
   }, [folder]);
 
-  if (checking) return null;
+  const handleNewSession = useCallback(() => {
+    setSessionReady(false);
+    setFolder("");
+    setError(null);
+  }, []);
+
+  if (checking) {
+    return (
+      <div style={{
+        height: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontFamily: typography.fontFamily,
+        background: colors.bg,
+      }}>
+        <span className="pulse" style={{ color: colors.textMuted, fontSize: typography.sizes.lg }}>
+          Connecting...
+        </span>
+      </div>
+    );
+  }
 
   if (!sessionReady) {
     return (
@@ -166,16 +233,69 @@ export default function App() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        fontFamily: "system-ui, sans-serif",
-        background: "#f8f9fa",
+        fontFamily: typography.fontFamily,
+        background: colors.bg,
       }}>
-        <div style={{ width: 440, textAlign: "center" }}>
-          <div style={{ fontSize: 48, opacity: 0.3, marginBottom: 8 }}>&#9671;</div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>Claude Code Canvas</h1>
-          <p style={{ color: "#666", marginBottom: 24, fontSize: 14 }}>
-            Choose a workspace folder to get started.
+        <div style={{
+          width: 480,
+          textAlign: "center",
+          background: colors.surface,
+          borderRadius: radius.xl,
+          padding: `${spacing.xxl + 8}px ${spacing.xxl}px`,
+          boxShadow: shadows.lg,
+          border: `1px solid ${colors.borderLight}`,
+        }}>
+          {/* Logo */}
+          <div style={{
+            width: 48,
+            height: 48,
+            borderRadius: radius.lg,
+            background: `linear-gradient(135deg, ${colors.accent}, ${colors.accentHover})`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#fff",
+            fontSize: 22,
+            fontWeight: 700,
+            margin: "0 auto 16px",
+          }}>
+            &#9671;
+          </div>
+
+          <h1 style={{
+            fontSize: typography.sizes.xxl,
+            fontWeight: typography.weights.bold,
+            color: colors.text,
+            marginBottom: spacing.xs,
+          }}>
+            File Analysis Studio
+          </h1>
+          <p style={{
+            color: colors.textSecondary,
+            marginBottom: spacing.xl,
+            fontSize: typography.sizes.lg,
+            lineHeight: 1.5,
+          }}>
+            Choose a workspace folder to get started
           </p>
-          <div style={{ display: "flex", gap: 8 }}>
+
+          {/* Branding */}
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: spacing.sm,
+            marginBottom: spacing.xl,
+            fontSize: typography.sizes.sm,
+            color: colors.textMuted,
+          }}>
+            <span>Powered by</span>
+            <span style={{ fontWeight: typography.weights.semibold, color: colors.accent }}>CopilotKit</span>
+            <span>+</span>
+            <span style={{ fontWeight: typography.weights.semibold, color: colors.textSecondary }}>Claude Code</span>
+          </div>
+
+          <div style={{ display: "flex", gap: spacing.sm }}>
             <input
               value={folder}
               onChange={(e) => setFolder(e.target.value)}
@@ -183,12 +303,15 @@ export default function App() {
               placeholder="Enter folder path..."
               style={{
                 flex: 1,
-                padding: "10px 12px",
-                fontSize: 13,
-                border: "1px solid #ddd",
-                borderRadius: 6,
-                fontFamily: "monospace",
+                padding: `${spacing.md}px ${spacing.lg}px`,
+                fontSize: typography.sizes.md,
+                border: `1px solid ${colors.border}`,
+                borderRadius: radius.md,
+                fontFamily: typography.mono,
                 outline: "none",
+                background: colors.surface,
+                color: colors.text,
+                transition: transitions.fast,
               }}
               disabled={loading}
               autoFocus
@@ -197,20 +320,30 @@ export default function App() {
               onClick={createSession}
               disabled={loading || !folder.trim()}
               style={{
-                padding: "10px 24px",
-                fontSize: 13,
-                fontWeight: 600,
-                background: loading ? "#999" : "#0066cc",
+                padding: `${spacing.md}px ${spacing.xl}px`,
+                fontSize: typography.sizes.md,
+                fontWeight: typography.weights.semibold,
+                fontFamily: typography.fontFamily,
+                background: loading ? colors.textMuted : colors.accent,
                 color: "#fff",
                 border: "none",
-                borderRadius: 6,
+                borderRadius: radius.md,
                 cursor: loading ? "not-allowed" : "pointer",
+                transition: transitions.fast,
               }}
             >
               {loading ? "Connecting..." : "Start"}
             </button>
           </div>
-          {error && <p style={{ color: "#c62828", fontSize: 12, marginTop: 8 }}>{error}</p>}
+          {error && (
+            <p style={{
+              color: colors.error,
+              fontSize: typography.sizes.sm,
+              marginTop: spacing.sm,
+            }}>
+              {error}
+            </p>
+          )}
         </div>
       </div>
     );
@@ -218,7 +351,7 @@ export default function App() {
 
   return (
     <CopilotKit runtimeUrl={RUNTIME_URL} agent="default">
-      <Workspace />
+      <Workspace onNewSession={handleNewSession} />
     </CopilotKit>
   );
 }

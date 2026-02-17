@@ -3,9 +3,11 @@ export type CanvasComponentType =
   | "editable-table"
   | "line-chart"
   | "bar-chart"
+  | "pie-chart"
   | "json-viewer"
   | "key-value"
   | "progress-dashboard"
+  | "tab-container"
   | "custom";
 
 export interface CanvasComponent {

@@ -10,7 +10,7 @@ Tool approval dialogs, model switching, permission modes, MCP servers, multi-ses
 
 The included demo app (**File Analysis Studio**) shows what's possible — a three-panel workspace where Claude spawns interactive visualizations, manages files, and collaborates through inline UI components:
 
-https://github.com/DaveDushi/copilotkit-claudecode-bridge/releases/download/assets/CopilotKit-ClaudeCode-Bridge-Demo.mp4
+[![Demo](https://img.youtube.com/vi/BixdP27xJy8/maxresdefault.jpg)](https://www.youtube.com/watch?v=BixdP27xJy8)
 
 ## How It Works
 
